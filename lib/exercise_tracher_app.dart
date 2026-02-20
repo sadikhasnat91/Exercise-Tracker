@@ -1,12 +1,19 @@
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 
-void main() {
-  runApp(const ExerciseTrackerApp());
-}
+import 'firebase_options.dart';
+
+
+
+
 
 class ExerciseTrackerApp extends StatelessWidget {
   const ExerciseTrackerApp({super.key});
@@ -14,19 +21,26 @@ class ExerciseTrackerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Exercise & Weight Tracker',
+      title: 'FitLog',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
+          seedColor: Colors.teal,
           brightness: Brightness.dark,
         ),
-        scaffoldBackgroundColor: Colors.grey.shade900,
+        scaffoldBackgroundColor: const Color(0xFF0F121A),
         cardTheme: CardThemeData(
-          elevation: 4,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          color: Colors.white.withOpacity(0.05),
+          elevation: 6,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          color: const Color(0xFF1A1F2E),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 4,
+          ),
         ),
       ),
       home: const HomePage(),
@@ -35,7 +49,7 @@ class ExerciseTrackerApp extends StatelessWidget {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// MODELS & HELPERS
+// MODELS
 // ──────────────────────────────────────────────────────────────────────────────
 
 class Exercise {
@@ -73,13 +87,13 @@ class Exercise {
 
   factory Exercise.fromJson(Map<String, dynamic> json) {
     return Exercise(
-      id: json['id'] ?? '',
-      name: json['name'] ?? 'Unknown',
-      sets: json['sets'] ?? 0,
-      reps: json['reps'] ?? 0,
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Unknown',
+      sets: json['sets'] as int? ?? 0,
+      reps: json['reps'] as int? ?? 0,
       weight: (json['weight'] as num?)?.toDouble() ?? 0.0,
-      date: DateTime.tryParse(json['date'] ?? '') ?? DateTime.now(),
-      isProgressiveOverload: json['isProgressiveOverload'] ?? false,
+      date: DateTime.tryParse(json['date'] as String? ?? '') ?? DateTime.now(),
+      isProgressiveOverload: json['isProgressiveOverload'] as bool? ?? false,
     );
   }
 }
@@ -105,6 +119,10 @@ class BodyWeightEntry {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────────────────────────────
+
 Future<String> getWeightUnit() async {
   final prefs = await SharedPreferences.getInstance();
   return prefs.getString('weight_unit') ?? 'KG';
@@ -115,8 +133,16 @@ Future<void> setWeightUnit(String unit) async {
   await prefs.setString('weight_unit', unit);
 }
 
+String getGreeting() {
+  final hour = DateTime.now().hour;
+  if (hour < 12) return 'Good Morning';
+  if (hour < 17) return 'Good Afternoon';
+  if (hour < 22) return 'Good Evening';
+  return 'Good Night';
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
-// HOME PAGE & NAVIGATION
+// HOME PAGE
 // ──────────────────────────────────────────────────────────────────────────────
 
 class HomePage extends StatefulWidget {
@@ -133,7 +159,7 @@ class _HomePageState extends State<HomePage> {
     const WorkoutEntryPage(),
     const WorkoutHistoryPage(),
     const AnalyticsPage(),
-    const BodyWeightTrackerPage(),
+    const ProfilePage(),
   ];
 
   @override
@@ -144,7 +170,7 @@ class _HomePageState extends State<HomePage> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) => setState(() => _currentIndex = index),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.add_circle_outline), label: 'Add'),
+          NavigationDestination(icon: Icon(Icons.add_circle_outline), label: 'Add Workout'),
           NavigationDestination(icon: Icon(Icons.history), label: 'History'),
           NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Analytics'),
           NavigationDestination(icon: Icon(Icons.person_outline), label: 'Profile'),
@@ -155,7 +181,7 @@ class _HomePageState extends State<HomePage> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// EXERCISE SUGGESTION LIBRARY (emoji icons)
+// EXERCISE SUGGESTION LIBRARY
 // ──────────────────────────────────────────────────────────────────────────────
 
 final List<Map<String, String>> exerciseLibrary = [
@@ -177,7 +203,7 @@ final List<Map<String, String>> exerciseLibrary = [
 ];
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ADD WORKOUT PAGE (with visual upgrade + exercise library)
+// ADD WORKOUT PAGE - WITH VISUAL UPGRADE & LIBRARY
 // ──────────────────────────────────────────────────────────────────────────────
 
 class WorkoutEntryPage extends StatefulWidget {
@@ -312,14 +338,14 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage> {
             child: SingleChildScrollView(
               child: Column(
                 children: [
-                  // Hero section with background image
+                  // Hero image section
                   Stack(
                     children: [
                       SizedBox(
                         height: 260,
                         width: double.infinity,
-                        child: Image.asset(
-                          'IM1.jpeg',
+                        child: Image.network(
+                          'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800',
                           fit: BoxFit.cover,
                           color: Colors.black.withOpacity(0.45),
                           colorBlendMode: BlendMode.darken,
@@ -329,15 +355,15 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            // const Text(
-                            //   'LOG NEW WORKOUT',
-                            //   style: TextStyle(
-                            //     fontSize: 28,
-                            //     fontWeight: FontWeight.bold,
-                            //     color: Colors.white,
-                            //     letterSpacing: 1.2,
-                            //   ),
-                            // ),
+                            Text(
+                              getGreeting(),
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
                             const SizedBox(height: 20),
                             Container(
                               padding: const EdgeInsets.all(16),
@@ -381,7 +407,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage> {
                                       children: [
                                         CircleAvatar(
                                           radius: 32,
-                                          backgroundColor: Colors.blue.shade800.withOpacity(0.4),
+                                          backgroundColor: Colors.teal.withOpacity(0.4),
                                           child: Text(ex['emoji']!, style: const TextStyle(fontSize: 36)),
                                         ),
                                         const SizedBox(height: 6),
@@ -416,7 +442,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage> {
                                     foregroundColor: Colors.white,
                                     selectedForegroundColor: Colors.white,
                                     backgroundColor: Colors.grey.shade700,
-                                    selectedBackgroundColor: Colors.blue.shade700,
+                                    selectedBackgroundColor: Colors.teal.shade700,
                                   ),
                                   segments: const [
                                     ButtonSegment(value: 'KG', label: Text('KG')),
@@ -541,7 +567,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// WORKOUT HISTORY PAGE
+// WORKOUT HISTORY PAGE - FULL CRUD
 // ──────────────────────────────────────────────────────────────────────────────
 
 class WorkoutHistoryPage extends StatefulWidget {
@@ -1209,32 +1235,64 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// BODY WEIGHT TRACKER PAGE
+// PROFILE PAGE - BODY WEIGHT TRACKER + PROFILE FEATURES
 // ──────────────────────────────────────────────────────────────────────────────
 
-class BodyWeightTrackerPage extends StatefulWidget {
-  const BodyWeightTrackerPage({super.key});
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
 
   @override
-  State<BodyWeightTrackerPage> createState() => _BodyWeightTrackerPageState();
+  State<ProfilePage> createState() => _ProfilePageState();
 }
 
-class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
+class _ProfilePageState extends State<ProfilePage> {
   final _weightController = TextEditingController();
+  final _nameController = TextEditingController();
   List<BodyWeightEntry> _entries = [];
   bool _isLoading = true;
   String _unit = 'KG';
+  String _userName = '';
+  File? _profileImage;
 
   @override
   void initState() {
     super.initState();
     _loadUnit();
     _loadWeights();
+    _loadProfile();
   }
 
   Future<void> _loadUnit() async {
     final unit = await getWeightUnit();
     setState(() => _unit = unit);
+  }
+
+  Future<void> _loadProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _userName = prefs.getString('user_name') ?? '';
+      final imagePath = prefs.getString('profile_image');
+      if (imagePath != null) {
+        _profileImage = File(imagePath);
+      }
+      _nameController.text = _userName;
+    });
+  }
+
+  Future<void> _saveProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_name', _nameController.text.trim());
+    setState(() => _userName = _nameController.text.trim());
+  }
+
+  Future<void> _pickImage() async {
+    final picker = ImagePicker();
+    final pickedImage = await picker.pickImage(source: ImageSource.gallery);
+    if (pickedImage != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('profile_image', pickedImage.path);
+      setState(() => _profileImage = File(pickedImage.path));
+    }
   }
 
   Future<void> _loadWeights() async {
@@ -1273,6 +1331,104 @@ class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
     setState(() {});
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Weight saved!'), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _deleteWeightData(String period) async {
+    final prefs = await SharedPreferences.getInstance();
+    final weightsJson = prefs.getString('body_weights') ?? '[]';
+    List<dynamic> list = json.decode(weightsJson);
+
+    DateTime threshold = DateTime.now();
+    switch (period) {
+      case '1 day':
+        threshold = threshold.subtract(const Duration(days: 1));
+        break;
+      case '1 week':
+        threshold = threshold.subtract(const Duration(days: 7));
+        break;
+      case '1 month':
+        threshold = threshold.subtract(const Duration(days: 30));
+        break;
+      case 'all':
+        list = [];
+        break;
+    }
+
+    if (period != 'all') {
+      list = list.where((e) {
+        final entry = BodyWeightEntry.fromJson(e as Map<String, dynamic>);
+        return entry.date.isBefore(threshold);
+      }).toList();
+    }
+
+    await prefs.setString('body_weights', json.encode(list));
+    _loadWeights();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$period data deleted')));
+  }
+
+  Future<void> _deleteExerciseData(String period) async {
+    final prefs = await SharedPreferences.getInstance();
+    final exercisesJson = prefs.getString('exercises') ?? '[]';
+    List<dynamic> list = json.decode(exercisesJson);
+
+    DateTime threshold = DateTime.now();
+    switch (period) {
+      case '1 day':
+        threshold = threshold.subtract(const Duration(days: 1));
+        break;
+      case '1 week':
+        threshold = threshold.subtract(const Duration(days: 7));
+        break;
+      case '1 month':
+        threshold = threshold.subtract(const Duration(days: 30));
+        break;
+      case 'all':
+        list = [];
+        break;
+    }
+
+    if (period != 'all') {
+      list = list.where((e) {
+        final entry = Exercise.fromJson(e as Map<String, dynamic>);
+        return entry.date.isBefore(threshold);
+      }).toList();
+    }
+
+    await prefs.setString('exercises', json.encode(list));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$period exercise data deleted')));
+  }
+
+  void _showDeleteOptions(String type) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete $type Data'),
+        content: const Text('Choose period to delete:'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () {
+            if (type == 'Weight') _deleteWeightData('1 day');
+            else _deleteExerciseData('1 day');
+            Navigator.pop(context);
+          }, child: const Text('1 Day')),
+          TextButton(onPressed: () {
+            if (type == 'Weight') _deleteWeightData('1 week');
+            else _deleteExerciseData('1 week');
+            Navigator.pop(context);
+          }, child: const Text('1 Week')),
+          TextButton(onPressed: () {
+            if (type == 'Weight') _deleteWeightData('1 month');
+            else _deleteExerciseData('1 month');
+            Navigator.pop(context);
+          }, child: const Text('1 Month')),
+          TextButton(onPressed: () {
+            if (type == 'Weight') _deleteWeightData('all');
+            else _deleteExerciseData('all');
+            Navigator.pop(context);
+          }, child: const Text('All', style: TextStyle(color: Colors.red))),
+        ],
+      ),
     );
   }
 
@@ -1354,9 +1510,8 @@ class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Body Weight Tracker', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Profile', style: TextStyle(fontWeight: FontWeight.bold)),
         centerTitle: true,
-        actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _loadWeights)],
       ),
       body: SafeArea(
         child: _isLoading
@@ -1365,6 +1520,37 @@ class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      GestureDetector(
+                        onTap: _pickImage,
+                        child: CircleAvatar(
+                          radius: 50,
+                          backgroundImage: _profileImage != null ? FileImage(_profileImage!) : null,
+                          child: _profileImage == null ? const Icon(Icons.person, size: 50) : null,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Name',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: _saveProfile,
+                        child: const Text('Save Name'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -1425,6 +1611,20 @@ class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
                   );
                 },
               ),
+              const SizedBox(height: 32),
+              FilledButton.icon(
+                onPressed: () => _showDeleteOptions('Weight'),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Weight Data',style: TextStyle(color: Colors.white),),
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: () => _showDeleteOptions('Exercise'),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete Exercise Data',style: TextStyle(color: Colors.white),),
+                style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              ),
             ],
           ),
         ),
@@ -1435,6 +1635,7 @@ class _BodyWeightTrackerPageState extends State<BodyWeightTrackerPage> {
   @override
   void dispose() {
     _weightController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 }

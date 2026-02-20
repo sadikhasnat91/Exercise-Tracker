@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "31286710766",
+    "project_id": "exercise-79ff5",
+    "storage_bucket": "exercise-79ff5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31286710766:android:763e82b082898f7a9d3eff",
+        "android_client_info": {
+          "package_name": "com.example.mahee"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYZK8w1CGhU5ttFLso-nw6XGYn6BMaD8g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
