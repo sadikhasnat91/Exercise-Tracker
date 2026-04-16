@@ -1266,7 +1266,44 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ═══════════════════════════════════════════════════════════════════════════════
-// TODAY'S PLAN PAGE  (notepad style — gym + diet)
+// PLAN MODEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _PlanEntry {
+  final String id;
+  String title;
+  String content;
+  String type; // 'gym' | 'diet'
+  final DateTime createdAt;
+
+  _PlanEntry({
+    required this.id,
+    required this.title,
+    required this.content,
+    required this.type,
+    required this.createdAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'content': content,
+        'type': type,
+        'createdAt': createdAt.toIso8601String(),
+      };
+
+  factory _PlanEntry.fromJson(Map<String, dynamic> j) => _PlanEntry(
+        id: j['id'] as String,
+        title: j['title'] as String? ?? 'Untitled',
+        content: j['content'] as String? ?? '',
+        type: j['type'] as String? ?? 'gym',
+        createdAt: DateTime.tryParse(j['createdAt'] as String? ?? '') ??
+            DateTime.now(),
+      );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TODAY'S PLAN PAGE  (CRUD — Gym & Diet tabs with FAB)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class WorkoutPlanPage extends StatefulWidget {
@@ -1277,74 +1314,55 @@ class WorkoutPlanPage extends StatefulWidget {
 
 class _WorkoutPlanPageState extends State<WorkoutPlanPage>
     with SingleTickerProviderStateMixin {
-  late TabController _tab;
-  final _gymCtrl = TextEditingController();
-  final _dietCtrl = TextEditingController();
+  static const _storageKey = 'workout_plans_v2';
+  List<_PlanEntry> _plans = [];
   bool _isLoading = true;
-  bool _gymEdited = false;
-  bool _dietEdited = false;
+  late TabController _tab;
 
   @override
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
     _load();
-    _gymCtrl.addListener(() => setState(() => _gymEdited = true));
-    _dietCtrl.addListener(() => setState(() => _dietEdited = true));
   }
 
   @override
   void dispose() {
     _tab.dispose();
-    _gymCtrl.dispose();
-    _dietCtrl.dispose();
     super.dispose();
   }
 
-  String get _gymKey =>
-      'notepad_gym_${DateFormat('yyyy-MM-dd').format(DateTime.now())}';
-  String get _dietKey =>
-      'notepad_diet_${DateFormat('yyyy-MM-dd').format(DateTime.now())}';
-
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    _gymCtrl.text = prefs.getString(_gymKey) ?? '';
-    _dietCtrl.text = prefs.getString(_dietKey) ?? '';
-    if (mounted) {
-      setState(() {
-        _gymEdited = false;
-        _dietEdited = false;
-        _isLoading = false;
-      });
+    final raw = prefs.getString(_storageKey);
+    if (raw != null) {
+      try {
+        final list = json.decode(raw) as List<dynamic>;
+        _plans = list
+            .whereType<Map<String, dynamic>>()
+            .map(_PlanEntry.fromJson)
+            .toList();
+      } catch (_) {
+        _plans = [];
+      }
     }
+    if (mounted) setState(() => _isLoading = false);
   }
 
-  Future<void> _saveGym() async {
+  Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_gymKey, _gymCtrl.text);
-    if (mounted) {
-      setState(() => _gymEdited = false);
-      _showSaved();
-    }
+    await prefs.setString(
+        _storageKey, json.encode(_plans.map((p) => p.toJson()).toList()));
   }
 
-  Future<void> _saveDiet() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_dietKey, _dietCtrl.text);
-    if (mounted) {
-      setState(() => _dietEdited = false);
-      _showSaved();
-    }
-  }
-
-  void _showSaved() {
+  void _showSnack(String msg, {Color color = _C.accent}) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: const Row(children: [
-        Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
-        SizedBox(width: 10),
-        Text('Plan saved!', style: TextStyle(fontWeight: FontWeight.w600)),
+      content: Row(children: [
+        const Icon(Icons.check_circle_rounded, color: Colors.white, size: 18),
+        const SizedBox(width: 10),
+        Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
       ]),
-      backgroundColor: _C.accent,
+      backgroundColor: color,
       behavior: SnackBarBehavior.floating,
       duration: const Duration(seconds: 1),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1352,205 +1370,553 @@ class _WorkoutPlanPageState extends State<WorkoutPlanPage>
     ));
   }
 
+  Future<void> _openEditor({_PlanEntry? existing, String? defaultType}) async {
+    final result = await Navigator.of(context).push<_PlanEntry>(
+      MaterialPageRoute(
+        builder: (_) => _PlanEditorPage(
+          plan: existing,
+          defaultType: defaultType ?? 'gym',
+        ),
+      ),
+    );
+    if (result == null) return;
+    setState(() {
+      if (existing == null) {
+        _plans.insert(0, result);
+      } else {
+        final idx = _plans.indexWhere((p) => p.id == result.id);
+        if (idx != -1) _plans[idx] = result;
+      }
+    });
+    await _save();
+    _showSnack(existing == null ? 'Plan created!' : 'Plan updated!');
+  }
+
+  Future<void> _deletePlan(_PlanEntry plan) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _C.cardSolid,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Delete Plan',
+            style: TextStyle(color: _C.textPrimary, fontWeight: FontWeight.w700)),
+        content: Text('Delete "${plan.title}"? This cannot be undone.',
+            style: const TextStyle(color: _C.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: _C.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete',
+                style: TextStyle(color: _C.coral, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _plans.removeWhere((p) => p.id == plan.id));
+    await _save();
+    _showSnack('Plan deleted.', color: _C.coral);
+  }
+
+  Widget _buildTabContent(String type) {
+    final color = type == 'gym' ? _C.accent : _C.green;
+    final typeLabel = type == 'gym' ? 'gym' : 'diet';
+    final filtered = _plans.where((p) => p.type == type).toList();
+    if (filtered.isEmpty) {
+      return _buildEmptyState(
+        type == 'gym'
+            ? Icons.fitness_center_rounded
+            : Icons.restaurant_rounded,
+        'No ${type == 'gym' ? 'Gym' : 'Diet'} Plans Yet',
+        'Tap "+ Add" to create your first ${typeLabel} plan',
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+      itemCount: filtered.length,
+      itemBuilder: (_, i) => _PlanCard(
+        plan: filtered[i],
+        accentColor: color,
+        onEdit: () => _openEditor(existing: filtered[i], defaultType: type),
+        onDelete: () => _deletePlan(filtered[i]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = DateFormat('EEEE, MMM d').format(DateTime.now());
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: Column(
-          children: [
-            const Text("Today's Plan"),
-            Text(today,
-                style: const TextStyle(
-                    fontSize: 11,
-                    color: _C.textSecondary,
-                    fontWeight: FontWeight.w400)),
-          ],
-        ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0x33FFFFFF),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: _C.border),
-                  ),
-                  child: TabBar(
-                    controller: _tab,
-                    dividerColor: Colors.transparent,
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    indicator: BoxDecoration(
-                      gradient: const LinearGradient(
-                          colors: [_C.accent, Color(0xFF6200EA)]),
-                      borderRadius: BorderRadius.circular(10),
+    // Which tab is active
+    return AnimatedBuilder(
+      animation: _tab,
+      builder: (context, _) {
+        final currentType = _tab.index == 0 ? 'gym' : 'diet';
+        final fabColor = _tab.index == 0 ? _C.accent : _C.green;
+        final fabLabel = _tab.index == 0 ? 'Add Gym Plan' : 'Add Diet Plan';
+        return Scaffold(
+          backgroundColor: Colors.transparent,
+          appBar: AppBar(
+            title: Column(
+              children: [
+                const Text("My Plans"),
+                Text(today,
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: _C.textSecondary,
+                        fontWeight: FontWeight.w400)),
+              ],
+            ),
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(48),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0x33FFFFFF),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _C.border),
+                      ),
+                      child: TabBar(
+                        controller: _tab,
+                        dividerColor: Colors.transparent,
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        indicator: BoxDecoration(
+                          gradient: const LinearGradient(
+                              colors: [_C.accent, Color(0xFF6200EA)]),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        labelStyle: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w700),
+                        unselectedLabelStyle: const TextStyle(
+                            fontSize: 13, fontWeight: FontWeight.w500),
+                        labelColor: Colors.white,
+                        unselectedLabelColor: _C.textMuted,
+                        tabs: const [
+                          Tab(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.fitness_center_rounded, size: 15),
+                                SizedBox(width: 6),
+                                Text('Gym Plan'),
+                              ],
+                            ),
+                          ),
+                          Tab(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.restaurant_rounded, size: 15),
+                                SizedBox(width: 6),
+                                Text('Diet Plan'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    labelStyle: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700),
-                    unselectedLabelStyle: const TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w500),
-                    labelColor: Colors.white,
-                    unselectedLabelColor: _C.textMuted,
-                    tabs: const [
-                      Tab(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.fitness_center_rounded, size: 15),
-                            SizedBox(width: 6),
-                            Text('Gym Plan'),
-                          ],
-                        ),
-                      ),
-                      Tab(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.restaurant_rounded, size: 15),
-                            SizedBox(width: 6),
-                            Text('Diet Plan'),
-                          ],
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: _C.accent))
-          : TabBarView(
-              controller: _tab,
-              children: [
-                _NotepadTab(
-                  controller: _gymCtrl,
-                  accentColor: _C.accent,
-                  hintText: 'Write your gym plan here...\n\nExample:\nDay 1 – Push\n  • Bench Press 4×8\n  • Incline DB Press 3×10\n  • Tricep Ext 3×12\n\nDay 2 – Pull\n  • Pull-Ups 4×8\n  • Barbell Row 4×10\n  ...',
-                  isEdited: _gymEdited,
-                  onSave: _saveGym,
+          body: Stack(
+            children: [
+              _isLoading
+                  ? const Center(
+                      child: CircularProgressIndicator(color: _C.accent))
+                  : TabBarView(
+                      controller: _tab,
+                      children: [
+                        _buildTabContent('gym'),
+                        _buildTabContent('diet'),
+                      ],
+                    ),
+              // FAB — above bottom nav bar
+              Positioned(
+                right: 16,
+                bottom: 90,
+                child: FloatingActionButton.extended(
+                  heroTag: 'plan_fab',
+                  onPressed: () =>
+                      _openEditor(defaultType: currentType),
+                  backgroundColor: fabColor,
+                  icon: const Icon(Icons.add_rounded, color: Colors.white),
+                  label: Text(fabLabel,
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w700)),
                 ),
-                _NotepadTab(
-                  controller: _dietCtrl,
-                  accentColor: _C.green,
-                  hintText: 'Write your diet plan here...\n\nExample:\nBreakfast:\n  • Oats + protein shake\n  • 3 eggs\n\nLunch:\n  • Rice + chicken + veggies\n\nSnack:\n  • Banana + peanut butter\n\nDinner:\n  • Salmon + salad',
-                  isEdited: _dietEdited,
-                  onSave: _saveDiet,
-                ),
-              ],
-            ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
 
-class _NotepadTab extends StatelessWidget {
-  final TextEditingController controller;
-  final Color accentColor;
-  final String hintText;
-  final bool isEdited;
-  final VoidCallback onSave;
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan card widget
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const _NotepadTab({
-    required this.controller,
+class _PlanCard extends StatelessWidget {
+  final _PlanEntry plan;
+  final Color accentColor;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _PlanCard({
+    required this.plan,
     required this.accentColor,
-    required this.hintText,
-    required this.isEdited,
-    required this.onSave,
+    required this.onEdit,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // Save bar — only shows when there are unsaved changes
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          height: isEdited ? 52 : 0,
-          child: isEdited
-              ? Container(
-                  margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                        colors: [accentColor, accentColor.withAlpha(160)]),
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                          color: accentColor.withAlpha(70),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4)),
-                    ],
-                  ),
-                  child: TextButton.icon(
-                    onPressed: onSave,
-                    icon: const Icon(Icons.save_rounded,
-                        color: Colors.white, size: 18),
-                    label: const Text('Save Changes',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700)),
-                    style: TextButton.styleFrom(
-                        minimumSize: const Size.fromHeight(44)),
-                  ),
-                )
-              : const SizedBox.shrink(),
-        ),
+    final preview = plan.content.trim().isEmpty
+        ? 'No content yet…'
+        : plan.content.trim();
+    final dateStr =
+        DateFormat('MMM d, yyyy').format(plan.createdAt);
 
-        // Notepad area — fills remaining space
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xBB12141F),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                        color: accentColor.withAlpha(50), width: 0.8),
-                  ),
-                  padding: const EdgeInsets.all(18),
-                  child: TextField(
-                    controller: controller,
-                    maxLines: null,
-                    expands: true,
-                    textAlignVertical: TextAlignVertical.top,
-                    keyboardType: TextInputType.multiline,
-                    textCapitalization: TextCapitalization.sentences,
-                    style: const TextStyle(
-                      color: _C.textPrimary,
-                      fontSize: 15,
-                      height: 1.75,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: _GlassCard(
+        padding: const EdgeInsets.all(16),
+        borderColor: accentColor.withAlpha(60),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onEdit,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header row
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: accentColor.withAlpha(30),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    decoration: InputDecoration(
-                      hintText: hintText,
-                      hintStyle: TextStyle(
-                        color: _C.textMuted.withAlpha(110),
-                        fontSize: 14,
+                    child: Icon(Icons.event_note_rounded,
+                        color: accentColor, size: 18),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          plan.title,
+                          style: const TextStyle(
+                            color: _C.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(dateStr,
+                            style: const TextStyle(
+                                color: _C.textMuted, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  // Edit button
+                  IconButton(
+                    icon: const Icon(Icons.edit_rounded,
+                        color: _C.accentLight, size: 20),
+                    onPressed: onEdit,
+                    tooltip: 'Edit',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  // Delete button
+                  IconButton(
+                    icon: const Icon(Icons.delete_rounded,
+                        color: _C.coral, size: 20),
+                    onPressed: onDelete,
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Full text preview (no truncation)
+              Text(
+                preview,
+                style: const TextStyle(
+                  color: _C.textSecondary,
+                  fontSize: 13,
+                  height: 1.6,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan editor page — full-screen CRUD editor
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PlanEditorPage extends StatefulWidget {
+  final _PlanEntry? plan;
+  final String defaultType;
+  const _PlanEditorPage({super.key, this.plan, required this.defaultType});
+
+  @override
+  State<_PlanEditorPage> createState() => _PlanEditorPageState();
+}
+
+class _PlanEditorPageState extends State<_PlanEditorPage> {
+  late final TextEditingController _titleCtrl;
+  late final TextEditingController _contentCtrl;
+  late String _type;
+  bool _isDirty = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _type = widget.plan?.type ?? widget.defaultType;
+    _titleCtrl = TextEditingController(text: widget.plan?.title ?? '');
+    _contentCtrl = TextEditingController(text: widget.plan?.content ?? '');
+    _titleCtrl.addListener(_markDirty);
+    _contentCtrl.addListener(_markDirty);
+  }
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    _contentCtrl.dispose();
+    super.dispose();
+  }
+
+  void _markDirty() {
+    if (!_isDirty) setState(() => _isDirty = true);
+  }
+
+  void _save() {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Please enter a plan title.'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    final entry = _PlanEntry(
+      id: widget.plan?.id ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: title,
+      content: _contentCtrl.text,
+      type: _type,
+      createdAt: widget.plan?.createdAt ?? DateTime.now(),
+    );
+    Navigator.of(context).pop(entry);
+  }
+
+  Color get _accentColor => _type == 'gym' ? _C.accent : _C.green;
+
+  String get _hintText => _type == 'gym'
+      ? 'Write your gym plan here…\n\nExample:\nDay 1 – Push\n  • Bench Press 4×8\n  • Incline DB Press 3×10\n  • Tricep Ext 3×12\n\nDay 2 – Pull\n  • Pull-Ups 4×8\n  • Barbell Row 4×10'
+      : 'Write your diet plan here…\n\nExample:\nBreakfast:\n  • Oats + protein shake\n  • 3 eggs\n\nLunch:\n  • Rice + chicken + veggies\n\nSnack:\n  • Banana + peanut butter\n\nDinner:\n  • Salmon + salad';
+
+  @override
+  Widget build(BuildContext context) {
+    final isNew = widget.plan == null;
+    return Scaffold(
+      backgroundColor: _C.bg,
+      appBar: AppBar(
+        backgroundColor: _C.panel,
+        title: Text(isNew ? 'New Plan' : 'Edit Plan',
+            style: const TextStyle(
+                color: _C.textPrimary, fontWeight: FontWeight.w700)),
+        iconTheme: const IconThemeData(color: _C.textPrimary),
+        actions: [
+          AnimatedOpacity(
+            opacity: _isDirty ? 1.0 : 0.4,
+            duration: const Duration(milliseconds: 200),
+            child: TextButton.icon(
+              onPressed: _isDirty ? _save : null,
+              icon: Icon(Icons.save_rounded, color: _accentColor, size: 18),
+              label: Text('Save',
+                  style: TextStyle(
+                      color: _accentColor, fontWeight: FontWeight.w700)),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Type toggle (Gym / Diet) ──────────────────────────────────
+            Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: const Color(0x22FFFFFF),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _C.border),
+              ),
+              child: Row(
+                children: [
+                  _TypeToggleBtn(
+                    label: 'Gym Plan',
+                    icon: Icons.fitness_center_rounded,
+                    selected: _type == 'gym',
+                    color: _C.accent,
+                    onTap: () => setState(() {
+                      _type = 'gym';
+                      _isDirty = true;
+                    }),
+                  ),
+                  _TypeToggleBtn(
+                    label: 'Diet Plan',
+                    icon: Icons.restaurant_rounded,
+                    selected: _type == 'diet',
+                    color: _C.green,
+                    onTap: () => setState(() {
+                      _type = 'diet';
+                      _isDirty = true;
+                    }),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // ── Title field ───────────────────────────────────────────────
+            TextField(
+              controller: _titleCtrl,
+              style: const TextStyle(
+                  color: _C.textPrimary,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700),
+              decoration: InputDecoration(
+                hintText: 'Plan title…',
+                hintStyle: TextStyle(
+                    color: _C.textMuted.withAlpha(160), fontSize: 22),
+                border: InputBorder.none,
+                enabledBorder: UnderlineInputBorder(
+                    borderSide:
+                        BorderSide(color: _accentColor.withAlpha(80))),
+                focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: _accentColor, width: 2)),
+                contentPadding:
+                    const EdgeInsets.only(bottom: 8),
+              ),
+              textCapitalization: TextCapitalization.words,
+            ),
+            const SizedBox(height: 16),
+            // ── Content field — fills remaining space ─────────────────────
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xBB12141F),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: _accentColor.withAlpha(40), width: 0.8),
+                    ),
+                    padding: const EdgeInsets.all(18),
+                    child: TextField(
+                      controller: _contentCtrl,
+                      maxLines: null,
+                      expands: true,
+                      textAlignVertical: TextAlignVertical.top,
+                      keyboardType: TextInputType.multiline,
+                      textCapitalization: TextCapitalization.sentences,
+                      style: const TextStyle(
+                        color: _C.textPrimary,
+                        fontSize: 15,
                         height: 1.75,
                       ),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      filled: false,
-                      contentPadding: EdgeInsets.zero,
+                      decoration: InputDecoration(
+                        hintText: _hintText,
+                        hintStyle: TextStyle(
+                          color: _C.textMuted.withAlpha(110),
+                          fontSize: 14,
+                          height: 1.75,
+                        ),
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        filled: false,
+                        contentPadding: EdgeInsets.zero,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TypeToggleBtn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _TypeToggleBtn({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: selected ? color.withAlpha(40) : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+            border: selected
+                ? Border.all(color: color.withAlpha(120), width: 1)
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon,
+                  size: 15,
+                  color: selected ? color : _C.textMuted),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? color : _C.textMuted,
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
