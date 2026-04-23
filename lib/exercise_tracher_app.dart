@@ -447,6 +447,8 @@ class Exercise {
   final int sets;
   final int reps;
   final double weight;
+  final List<double> setWeights;
+  final String unit;
   final DateTime date;
   final bool isProgressiveOverload;
 
@@ -456,11 +458,25 @@ class Exercise {
     required this.sets,
     required this.reps,
     this.weight = 0.0,
+    this.setWeights = const [],
+    this.unit = 'KG',
     required this.date,
     this.isProgressiveOverload = false,
   });
 
-  double get volume => sets * reps * (weight > 0 ? weight : 1);
+  double get volume {
+    if (setWeights.isNotEmpty) {
+      return setWeights.fold(0.0, (sum, w) => sum + w * reps);
+    }
+    return sets * reps * (weight > 0 ? weight : 1);
+  }
+
+  double get avgWeight {
+    if (setWeights.isNotEmpty && setWeights.any((w) => w > 0)) {
+      return setWeights.reduce((a, b) => a + b) / setWeights.length;
+    }
+    return weight;
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -468,6 +484,8 @@ class Exercise {
         'sets': sets,
         'reps': reps,
         'weight': weight,
+        'setWeights': setWeights,
+        'unit': unit,
         'date': date.toIso8601String(),
         'isProgressiveOverload': isProgressiveOverload,
       };
@@ -478,6 +496,11 @@ class Exercise {
         sets: json['sets'] as int? ?? 0,
         reps: json['reps'] as int? ?? 0,
         weight: (json['weight'] as num?)?.toDouble() ?? 0.0,
+        setWeights: (json['setWeights'] as List<dynamic>?)
+                ?.map((e) => (e as num).toDouble())
+                .toList() ??
+            [],
+        unit: json['unit'] as String? ?? 'KG',
         date: DateTime.tryParse(json['date'] as String? ?? '') ??
             DateTime.now(),
         isProgressiveOverload:
@@ -487,18 +510,28 @@ class Exercise {
 
 class BodyWeightEntry {
   final double weight;
+  final String unit;
   final DateTime date;
 
-  BodyWeightEntry({required this.weight, required this.date});
+  BodyWeightEntry({required this.weight, this.unit = 'KG', required this.date});
+
+  /// Convert this entry's weight to [targetUnit] for display / charting.
+  double inUnit(String targetUnit) {
+    if (unit == targetUnit) return weight;
+    if (targetUnit == 'LB') return weight * 2.20462;   // KG → LB
+    return weight / 2.20462;                            // LB → KG
+  }
 
   Map<String, dynamic> toJson() => {
         'weight': weight,
+        'unit': unit,
         'date': date.toIso8601String(),
       };
 
   factory BodyWeightEntry.fromJson(Map<String, dynamic> json) =>
       BodyWeightEntry(
         weight: (json['weight'] as num).toDouble(),
+        unit: json['unit'] as String? ?? 'KG',
         date: DateTime.parse(json['date'] as String),
       );
 }
@@ -665,6 +698,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   final _setsCtrl = TextEditingController();
   final _repsCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
+  List<TextEditingController> _setWeightCtrls = [];
   bool _isSaving = false;
   String _selectedUnit = 'KG';
   int? _selectedExIdx;
@@ -680,6 +714,22 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _fadeAnim =
         CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic);
     _animCtrl.forward();
+    _setsCtrl.addListener(_onSetsChanged);
+  }
+
+  void _onSetsChanged() {
+    final n = int.tryParse(_setsCtrl.text) ?? 0;
+    _updateSetWeightCtrls(n.clamp(0, 20));
+  }
+
+  void _updateSetWeightCtrls(int count) {
+    while (_setWeightCtrls.length > count) {
+      _setWeightCtrls.removeLast().dispose();
+    }
+    while (_setWeightCtrls.length < count) {
+      _setWeightCtrls.add(TextEditingController());
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadUnit() async {
@@ -702,14 +752,21 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       final name = _exerciseNameCtrl.text.trim();
       final sets = int.parse(_setsCtrl.text);
       final reps = int.parse(_repsCtrl.text);
-      final weight = double.tryParse(_weightCtrl.text) ?? 0.0;
-      final isOverload = _checkOverload(list, name, sets, reps, weight);
+      final setWeights = _setWeightCtrls
+          .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
+          .toList();
+      final avgWeight = setWeights.isNotEmpty && setWeights.any((w) => w > 0)
+          ? setWeights.reduce((a, b) => a + b) / setWeights.length
+          : double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
+      final isOverload = _checkOverload(list, name, sets, reps, avgWeight);
       final ex = Exercise(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
         sets: sets,
         reps: reps,
-        weight: weight,
+        weight: avgWeight,
+        setWeights: setWeights,
+        unit: _selectedUnit,
         date: DateTime.now(),
         isProgressiveOverload: isOverload,
       );
@@ -750,6 +807,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       _setsCtrl.clear();
       _repsCtrl.clear();
       _weightCtrl.clear();
+      for (var c in _setWeightCtrls) c.clear();
+      _updateSetWeightCtrls(0);
       setState(() => _selectedExIdx = null);
     } catch (e) {
       if (mounted) {
@@ -789,6 +848,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _setsCtrl.dispose();
     _repsCtrl.dispose();
     _weightCtrl.dispose();
+    for (var c in _setWeightCtrls) c.dispose();
     super.dispose();
   }
 
@@ -1125,19 +1185,118 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                     ),
                     const SizedBox(height: 12),
 
-                    _glassField(
-                      controller: _weightCtrl,
-                      label: 'Weight ($_selectedUnit) - optional',
-                      icon: Icons.monitor_weight_rounded,
-                      iconColor: _C.amber,
-                      inputType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      validator: (v) {
-                        if (v?.isEmpty ?? true) return null;
-                        final n = double.tryParse(v!);
-                        return n == null || n < 0 ? 'Invalid weight' : null;
-                      },
-                    ),
+                    if (_setWeightCtrls.isNotEmpty) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(14),
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                          child: Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xAA1A1C2E),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                  color: _C.amber.withAlpha(60), width: 0.8),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.monitor_weight_rounded,
+                                        size: 16, color: _C.amber),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Set Weights ($_selectedUnit) — optional',
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: _C.textSecondary,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                ...List.generate(_setWeightCtrls.length, (i) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    child: Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 36,
+                                          child: Text(
+                                            'S${i + 1}',
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              color:
+                                                  _C.amber.withAlpha(200),
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _setWeightCtrls[i],
+                                            keyboardType:
+                                                const TextInputType.numberWithOptions(
+                                                    decimal: true),
+                                            style: const TextStyle(
+                                                color: _C.textPrimary,
+                                                fontSize: 14),
+                                            decoration: InputDecoration(
+                                              labelText: 'Set ${i + 1}',
+                                              labelStyle: const TextStyle(
+                                                  fontSize: 13,
+                                                  color: _C.textMuted),
+                                              prefixIcon: Icon(
+                                                  Icons
+                                                      .fitness_center_rounded,
+                                                  size: 16,
+                                                  color: _C.amber
+                                                      .withAlpha(160)),
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 10),
+                                            ),
+                                            validator: (v) {
+                                              if (v == null ||
+                                                  v.trim().isEmpty) {
+                                                return null;
+                                              }
+                                              final n =
+                                                  double.tryParse(v);
+                                              return n == null || n < 0
+                                                  ? 'Invalid'
+                                                  : null;
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      _glassField(
+                        controller: _weightCtrl,
+                        label: 'Weight ($_selectedUnit) — enter sets count first',
+                        icon: Icons.monitor_weight_rounded,
+                        iconColor: _C.amber,
+                        inputType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        validator: (v) {
+                          if (v?.isEmpty ?? true) return null;
+                          final n = double.tryParse(v!);
+                          return n == null || n < 0 ? 'Invalid weight' : null;
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 28),
 
                     // Gradient save button
@@ -1193,6 +1352,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         _setsCtrl.clear();
                         _repsCtrl.clear();
                         _weightCtrl.clear();
+                        for (var c in _setWeightCtrls) c.clear();
+                        _updateSetWeightCtrls(0);
                         setState(() => _selectedExIdx = null);
                       },
                       child: const Text('Clear Form',
@@ -1566,13 +1727,14 @@ class _WorkoutPlanPageState extends State<WorkoutPlanPage>
 // Plan card widget
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _PlanCard extends StatelessWidget {
+class _PlanCard extends StatefulWidget {
   final _PlanEntry plan;
   final Color accentColor;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
   const _PlanCard({
+    super.key,
     required this.plan,
     required this.accentColor,
     required this.onEdit,
@@ -1580,35 +1742,39 @@ class _PlanCard extends StatelessWidget {
   });
 
   @override
+  State<_PlanCard> createState() => _PlanCardState();
+}
+
+class _PlanCardState extends State<_PlanCard> {
+  bool _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
-    final preview = plan.content.trim().isEmpty
-        ? 'No content yet…'
-        : plan.content.trim();
-    final dateStr =
-        DateFormat('MMM d, yyyy').format(plan.createdAt);
+    final hasContent = widget.plan.content.trim().isNotEmpty;
+    final dateStr = DateFormat('MMM d, yyyy').format(widget.plan.createdAt);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: _GlassCard(
         padding: const EdgeInsets.all(16),
-        borderColor: accentColor.withAlpha(60),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onEdit,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Header row
-              Row(
+        borderColor: widget.accentColor.withAlpha(60),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header row — tap to expand/collapse
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Row(
                 children: [
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: accentColor.withAlpha(30),
+                      color: widget.accentColor.withAlpha(30),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Icon(Icons.event_note_rounded,
-                        color: accentColor, size: 18),
+                        color: widget.accentColor, size: 18),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1616,7 +1782,7 @@ class _PlanCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          plan.title,
+                          widget.plan.title,
                           style: const TextStyle(
                             color: _C.textPrimary,
                             fontSize: 16,
@@ -1629,11 +1795,22 @@ class _PlanCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  // Expand/collapse chevron
+                  AnimatedRotation(
+                    turns: _expanded ? 0.5 : 0.0,
+                    duration: const Duration(milliseconds: 220),
+                    child: Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color:
+                          _expanded ? widget.accentColor : _C.textMuted,
+                      size: 22,
+                    ),
+                  ),
                   // Edit button
                   IconButton(
                     icon: const Icon(Icons.edit_rounded,
                         color: _C.accentLight, size: 20),
-                    onPressed: onEdit,
+                    onPressed: widget.onEdit,
                     tooltip: 'Edit',
                     visualDensity: VisualDensity.compact,
                   ),
@@ -1641,24 +1818,44 @@ class _PlanCard extends StatelessWidget {
                   IconButton(
                     icon: const Icon(Icons.delete_rounded,
                         color: _C.coral, size: 20),
-                    onPressed: onDelete,
+                    onPressed: widget.onDelete,
                     tooltip: 'Delete',
                     visualDensity: VisualDensity.compact,
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              // Full text preview (no truncation)
-              Text(
-                preview,
-                style: const TextStyle(
-                  color: _C.textSecondary,
-                  fontSize: 13,
-                  height: 1.6,
+            ),
+            // Expandable content
+            AnimatedCrossFade(
+              firstChild: const SizedBox.shrink(),
+              secondChild: Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Divider(
+                        color: widget.accentColor.withAlpha(50),
+                        height: 1),
+                    const SizedBox(height: 12),
+                    Text(
+                      hasContent
+                          ? widget.plan.content.trim()
+                          : 'No content yet…',
+                      style: const TextStyle(
+                        color: _C.textSecondary,
+                        fontSize: 13,
+                        height: 1.65,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+              crossFadeState: _expanded
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              duration: const Duration(milliseconds: 250),
+            ),
+          ],
         ),
       ),
     );
@@ -1988,84 +2185,180 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
     final nameCtrl = TextEditingController(text: old.name);
     final setsCtrl = TextEditingController(text: old.sets.toString());
     final repsCtrl = TextEditingController(text: old.reps.toString());
-    final weightCtrl = TextEditingController(
-        text: old.weight > 0 ? old.weight.toStringAsFixed(1) : '');
+    final displayUnit = old.unit.isNotEmpty ? old.unit : _unit;
+
+    // Build initial per-set weight controllers
+    List<TextEditingController> setWeightCtrls;
+    if (old.setWeights.isNotEmpty) {
+      setWeightCtrls = old.setWeights
+          .map((w) =>
+              TextEditingController(text: w > 0 ? w.toStringAsFixed(1) : ''))
+          .toList();
+    } else {
+      final n = old.sets.clamp(0, 20);
+      setWeightCtrls = List.generate(
+          n,
+          (_) => TextEditingController(
+              text: old.weight > 0 ? old.weight.toStringAsFixed(1) : ''));
+    }
+
+    void updateCtrls(int newCount) {
+      while (setWeightCtrls.length > newCount) {
+        setWeightCtrls.removeLast().dispose();
+      }
+      while (setWeightCtrls.length < newCount) {
+        setWeightCtrls.add(TextEditingController());
+      }
+    }
 
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: AlertDialog(
-          backgroundColor: const Color(0xEE1A1C2E),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(24)),
-          title: const Text('Edit Workout',
-              style: TextStyle(color: _C.textPrimary)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _dialogField(nameCtrl, 'Exercise Name'),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(child: _dialogField(setsCtrl, 'Sets',
-                        type: TextInputType.number)),
-                    const SizedBox(width: 12),
-                    Expanded(child: _dialogField(repsCtrl, 'Reps',
-                        type: TextInputType.number)),
+        child: StatefulBuilder(
+          builder: (ctx2, setDialogState) => AlertDialog(
+            backgroundColor: const Color(0xEE1A1C2E),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24)),
+            title: const Text('Edit Workout',
+                style: TextStyle(color: _C.textPrimary)),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _dialogField(nameCtrl, 'Exercise Name'),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: setsCtrl,
+                          keyboardType: TextInputType.number,
+                          style: const TextStyle(color: _C.textPrimary),
+                          decoration:
+                              const InputDecoration(labelText: 'Sets'),
+                          onChanged: (v) {
+                            final n = int.tryParse(v) ?? 0;
+                            setDialogState(
+                                () => updateCtrls(n.clamp(0, 20)));
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                          child: _dialogField(repsCtrl, 'Reps',
+                              type: TextInputType.number)),
+                    ],
+                  ),
+                  if (setWeightCtrls.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Set Weights ($displayUnit)',
+                        style: TextStyle(
+                            color: _C.amber.withAlpha(220),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...setWeightCtrls.asMap().entries.map(
+                          (e) => Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 32,
+                                  child: Text(
+                                    'S${e.key + 1}',
+                                    style: TextStyle(
+                                        color: _C.amber.withAlpha(200),
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13),
+                                  ),
+                                ),
+                                Expanded(
+                                  child: TextField(
+                                    controller: e.value,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    style: const TextStyle(
+                                        color: _C.textPrimary),
+                                    decoration: InputDecoration(
+                                        labelText: 'Set ${e.key + 1}'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
                   ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel',
+                    style: TextStyle(color: _C.textMuted)),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                      colors: [_C.accent, Color(0xFF6200EA)]),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const SizedBox(height: 12),
-                _dialogField(weightCtrl, 'Weight ($_unit, optional)',
-                    type: const TextInputType.numberWithOptions(
-                        decimal: true)),
-              ],
-            ),
+                child: TextButton(
+                  onPressed: () {
+                    final s = int.tryParse(setsCtrl.text);
+                    final r = int.tryParse(repsCtrl.text);
+                    if (nameCtrl.text.trim().isEmpty ||
+                        s == null ||
+                        r == null ||
+                        s <= 0 ||
+                        r <= 0) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(content: Text('Invalid input')));
+                      return;
+                    }
+                    Navigator.pop(ctx, true);
+                  },
+                  child: const Text('Save',
+                      style: TextStyle(color: Colors.white)),
+                ),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel',
-                  style: TextStyle(color: _C.textMuted)),
-            ),
-            Container(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                    colors: [_C.accent, Color(0xFF6200EA)]),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: TextButton(
-                onPressed: () {
-                  final s = int.tryParse(setsCtrl.text);
-                  final r = int.tryParse(repsCtrl.text);
-                  if (nameCtrl.text.trim().isEmpty ||
-                      s == null || r == null || s <= 0 || r <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(content: Text('Invalid input')));
-                    return;
-                  }
-                  Navigator.pop(ctx, true);
-                },
-                child: const Text('Save',
-                    style: TextStyle(color: Colors.white)),
-              ),
-            ),
-          ],
         ),
       ),
     );
-    if (ok != true) return;
+
+    if (ok != true) {
+      for (var c in setWeightCtrls) c.dispose();
+      return;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('exercises') ?? '[]';
     final list = json.decode(raw) as List;
+    final newSetWeights =
+        setWeightCtrls.map((c) => double.tryParse(c.text.trim()) ?? 0.0).toList();
+    final avgWeight =
+        newSetWeights.isNotEmpty && newSetWeights.any((w) => w > 0)
+            ? newSetWeights.reduce((a, b) => a + b) / newSetWeights.length
+            : 0.0;
+    for (var c in setWeightCtrls) c.dispose();
+
     final updated = Exercise(
       id: old.id,
       name: nameCtrl.text.trim(),
       sets: int.parse(setsCtrl.text),
       reps: int.parse(repsCtrl.text),
-      weight: double.tryParse(weightCtrl.text) ?? 0.0,
+      weight: avgWeight,
+      setWeights: newSetWeights,
+      unit: old.unit.isNotEmpty ? old.unit : _unit,
       date: old.date,
     );
     final idx = list.indexWhere((e) => e is Map && e['id'] == old.id);
@@ -2210,8 +2503,10 @@ class _ExHistoryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final wt =
-        exercise.weight > 0 ? '${exercise.weight.toStringAsFixed(1)} $unit' : '';
+    final displayUnit = exercise.unit.isNotEmpty ? exercise.unit : unit;
+    final wt = exercise.weight > 0
+        ? '${exercise.weight.toStringAsFixed(1)} $displayUnit'
+        : '';
 
     return Dismissible(
       key: Key(exercise.id),
@@ -2352,18 +2647,38 @@ class _ExHistoryCard extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              _tag('${exercise.sets}s x ${exercise.reps}r'),
-                              if (wt.isNotEmpty) ...[
-                                const SizedBox(width: 6),
-                                _tag(wt),
-                              ],
-                              const SizedBox(width: 6),
-                              _tag(
-                                  'Vol: ${exercise.volume.toStringAsFixed(0)}'),
+                          if (exercise.setWeights.isNotEmpty &&
+                              exercise.setWeights.any((w) => w > 0)) ...
+                            [
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  _tag('${exercise.sets}s × ${exercise.reps}r'),
+                                  ...exercise.setWeights
+                                      .asMap()
+                                      .entries
+                                      .where((e) => e.value > 0)
+                                      .map((e) => _tag(
+                                          'S${e.key + 1}: ${e.value.toStringAsFixed(1)} $displayUnit')),
+                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)}'),
+                                ],
+                              ),
+                            ]
+                          else ...
+                            [
+                              Row(
+                                children: [
+                                  _tag('${exercise.sets}s × ${exercise.reps}r'),
+                                  if (wt.isNotEmpty) ...[
+                                    const SizedBox(width: 6),
+                                    _tag(wt),
+                                  ],
+                                  const SizedBox(width: 6),
+                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)}'),
+                                ],
+                              ),
                             ],
-                          ),
                         ],
                       ),
                     ),
@@ -2889,7 +3204,8 @@ class _ProfilePageState extends State<ProfilePage> {
   final _nameCtrl = TextEditingController();
   List<BodyWeightEntry> _entries = [];
   bool _isLoading = true;
-  String _unit = 'KG';
+  String _unit = 'KG';          // workout weight unit (read-only here)
+  String _bodyWeightUnit = 'KG'; // separate body-weight unit
   String _userName = '';
 
   @override
@@ -2902,6 +3218,7 @@ class _ProfilePageState extends State<ProfilePage> {
     setState(() => _isLoading = true);
     final prefs = await SharedPreferences.getInstance();
     _unit = prefs.getString('weight_unit') ?? 'KG';
+    _bodyWeightUnit = prefs.getString('body_weight_unit') ?? 'KG';
     _userName = prefs.getString('user_name') ?? '';
     _nameCtrl.text = _userName;
     try {
@@ -2914,6 +3231,12 @@ class _ProfilePageState extends State<ProfilePage> {
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _saveBodyWeightUnit(String unit) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('body_weight_unit', unit);
+    setState(() => _bodyWeightUnit = unit);
   }
 
   Future<void> _saveName() async {
@@ -2936,7 +3259,8 @@ class _ProfilePageState extends State<ProfilePage> {
           backgroundColor: _C.coral));
       return;
     }
-    _entries.insert(0, BodyWeightEntry(weight: w, date: DateTime.now()));
+    _entries.insert(
+        0, BodyWeightEntry(weight: w, unit: _bodyWeightUnit, date: DateTime.now()));
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         'body_weights', json.encode(_entries.map((e) => e.toJson()).toList()));
@@ -3146,12 +3470,31 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Log Body Weight',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            color: _C.textPrimary),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Log Body Weight',
+                            style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 16,
+                                color: _C.textPrimary),
+                          ),
+                          // KG / LB unit toggle
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
+                              children: [
+                                _bwUnitBtn('KG'),
+                                _bwUnitBtn('LB'),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 14),
                       Row(
@@ -3170,8 +3513,9 @@ class _ProfilePageState extends State<ProfilePage> {
                                   style: const TextStyle(
                                       color: _C.textPrimary),
                                   decoration: InputDecoration(
-                                    labelText: 'Weight ($_unit)',
-                                    hintText: '75.5',
+                                    labelText: 'Weight ($_bodyWeightUnit)',
+                                    hintText:
+                                        _bodyWeightUnit == 'KG' ? '75.5' : '165.0',
                                     prefixIcon: const Icon(
                                         Icons.monitor_weight_rounded,
                                         color: _C.cyan),
@@ -3258,7 +3602,7 @@ class _ProfilePageState extends State<ProfilePage> {
                                             CrossAxisAlignment.start,
                                         children: [
                                           Text(
-                                            '${entry.weight.toStringAsFixed(1)} $_unit',
+                                            '${entry.inUnit(_bodyWeightUnit).toStringAsFixed(1)} $_bodyWeightUnit',
                                             style: const TextStyle(
                                                 fontWeight: FontWeight.w600,
                                                 color: _C.textPrimary,
@@ -3312,8 +3656,10 @@ class _ProfilePageState extends State<ProfilePage> {
 
   Widget _buildWeightChart() {
     final sorted = _entries.reversed.toList();
+    // Convert every entry to the current display unit
     final spots = sorted.asMap().entries
-        .map((e) => FlSpot(e.key.toDouble(), e.value.weight))
+        .map((e) =>
+            FlSpot(e.key.toDouble(), e.value.inUnit(_bodyWeightUnit)))
         .toList();
     final minY = spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) - 2;
     final maxY = spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) + 2;
@@ -3324,7 +3670,7 @@ class _ProfilePageState extends State<ProfilePage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Weight Trend ($_unit)',
+            'Weight Trend ($_bodyWeightUnit)',
             style: const TextStyle(
                 fontWeight: FontWeight.w700,
                 fontSize: 16,
@@ -3388,7 +3734,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   touchTooltipData: LineTouchTooltipData(
                     getTooltipItems: (spots) => spots
                         .map((s) => LineTooltipItem(
-                              '${s.y.toStringAsFixed(1)} $_unit',
+                              '${s.y.toStringAsFixed(1)} $_bodyWeightUnit',
                               const TextStyle(
                                   color: Colors.white,
                                   fontSize: 12,
@@ -3423,6 +3769,33 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Small pill button used to toggle body-weight unit (KG / LB).
+  Widget _bwUnitBtn(String label) {
+    final active = _bodyWeightUnit == label;
+    return GestureDetector(
+      onTap: () => _saveBodyWeightUnit(label),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: active
+              ? const LinearGradient(colors: [_C.cyan, Color(0xFF0097A7)])
+              : null,
+          color: active ? null : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: active ? Colors.white : _C.textMuted,
+          ),
+        ),
       ),
     );
   }
