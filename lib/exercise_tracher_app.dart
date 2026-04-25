@@ -448,6 +448,7 @@ class Exercise {
   final int reps;
   final double weight;
   final List<double> setWeights;
+  final List<int> setReps;
   final String unit;
   final DateTime date;
   final bool isProgressiveOverload;
@@ -459,14 +460,24 @@ class Exercise {
     required this.reps,
     this.weight = 0.0,
     this.setWeights = const [],
+    this.setReps = const [],
     this.unit = 'KG',
     required this.date,
     this.isProgressiveOverload = false,
   });
 
   double get volume {
-    if (setWeights.isNotEmpty) {
-      return setWeights.fold(0.0, (sum, w) => sum + w * reps);
+    if (setWeights.isNotEmpty || setReps.isNotEmpty) {
+      double total = 0;
+      for (int i = 0; i < sets; i++) {
+        final w = (i < setWeights.length && setWeights[i] > 0)
+            ? setWeights[i]
+            : (weight > 0 ? weight : 1);
+        final r =
+            (i < setReps.length && setReps[i] > 0) ? setReps[i] : reps;
+        total += w * r;
+      }
+      return total;
     }
     return sets * reps * (weight > 0 ? weight : 1);
   }
@@ -485,6 +496,7 @@ class Exercise {
         'reps': reps,
         'weight': weight,
         'setWeights': setWeights,
+        'setReps': setReps,
         'unit': unit,
         'date': date.toIso8601String(),
         'isProgressiveOverload': isProgressiveOverload,
@@ -498,6 +510,10 @@ class Exercise {
         weight: (json['weight'] as num?)?.toDouble() ?? 0.0,
         setWeights: (json['setWeights'] as List<dynamic>?)
                 ?.map((e) => (e as num).toDouble())
+                .toList() ??
+            [],
+        setReps: (json['setReps'] as List<dynamic>?)
+                ?.map((e) => (e as num).toInt())
                 .toList() ??
             [],
         unit: json['unit'] as String? ?? 'KG',
@@ -699,6 +715,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   final _repsCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
   List<TextEditingController> _setWeightCtrls = [];
+  List<TextEditingController> _setRepsCtrls = [];
   bool _isSaving = false;
   String _selectedUnit = 'KG';
   int? _selectedExIdx;
@@ -729,6 +746,12 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     while (_setWeightCtrls.length < count) {
       _setWeightCtrls.add(TextEditingController());
     }
+    while (_setRepsCtrls.length > count) {
+      _setRepsCtrls.removeLast().dispose();
+    }
+    while (_setRepsCtrls.length < count) {
+      _setRepsCtrls.add(TextEditingController(text: _repsCtrl.text));
+    }
     if (mounted) setState(() {});
   }
 
@@ -755,6 +778,9 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       final setWeights = _setWeightCtrls
           .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
           .toList();
+      final setReps = _setRepsCtrls
+          .map((c) => int.tryParse(c.text.trim()) ?? 0)
+          .toList();
       final avgWeight = setWeights.isNotEmpty && setWeights.any((w) => w > 0)
           ? setWeights.reduce((a, b) => a + b) / setWeights.length
           : double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
@@ -766,6 +792,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         reps: reps,
         weight: avgWeight,
         setWeights: setWeights,
+        setReps: setReps,
         unit: _selectedUnit,
         date: DateTime.now(),
         isProgressiveOverload: isOverload,
@@ -849,6 +876,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _repsCtrl.dispose();
     _weightCtrl.dispose();
     for (var c in _setWeightCtrls) c.dispose();
+    for (var c in _setRepsCtrls) c.dispose();
     super.dispose();
   }
 
@@ -1206,16 +1234,43 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                     Icon(Icons.monitor_weight_rounded,
                                         size: 16, color: _C.amber),
                                     const SizedBox(width: 8),
-                                    Text(
-                                      'Set Weights ($_selectedUnit) — optional',
-                                      style: const TextStyle(
+                                    const Text(
+                                      'Per Set Details — optional',
+                                      style: TextStyle(
                                           fontSize: 12,
                                           color: _C.textSecondary,
                                           fontWeight: FontWeight.w600),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 12),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    const SizedBox(width: 44),
+                                    Expanded(
+                                      child: Center(
+                                        child: Text(
+                                          'Weight ($_selectedUnit)',
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: _C.textMuted),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Expanded(
+                                      child: Center(
+                                        child: Text(
+                                          'Reps',
+                                          style: TextStyle(
+                                              fontSize: 11,
+                                              color: _C.textMuted),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
                                 ...List.generate(_setWeightCtrls.length, (i) {
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 8),
@@ -1227,8 +1282,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                             'S${i + 1}',
                                             textAlign: TextAlign.center,
                                             style: TextStyle(
-                                              color:
-                                                  _C.amber.withAlpha(200),
+                                              color: _C.amber.withAlpha(200),
                                               fontWeight: FontWeight.w700,
                                               fontSize: 13,
                                             ),
@@ -1238,20 +1292,19 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                         Expanded(
                                           child: TextFormField(
                                             controller: _setWeightCtrls[i],
-                                            keyboardType:
-                                                const TextInputType.numberWithOptions(
-                                                    decimal: true),
+                                            keyboardType: const TextInputType
+                                                .numberWithOptions(
+                                                decimal: true),
                                             style: const TextStyle(
                                                 color: _C.textPrimary,
                                                 fontSize: 14),
                                             decoration: InputDecoration(
-                                              labelText: 'Set ${i + 1}',
-                                              labelStyle: const TextStyle(
+                                              hintText: '0.0',
+                                              hintStyle: const TextStyle(
                                                   fontSize: 13,
                                                   color: _C.textMuted),
                                               prefixIcon: Icon(
-                                                  Icons
-                                                      .fitness_center_rounded,
+                                                  Icons.fitness_center_rounded,
                                                   size: 16,
                                                   color: _C.amber
                                                       .withAlpha(160)),
@@ -1265,8 +1318,46 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                                   v.trim().isEmpty) {
                                                 return null;
                                               }
-                                              final n =
-                                                  double.tryParse(v);
+                                              final n = double.tryParse(v);
+                                              return n == null || n < 0
+                                                  ? 'Invalid'
+                                                  : null;
+                                            },
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: TextFormField(
+                                            controller: _setRepsCtrls[i],
+                                            keyboardType:
+                                                TextInputType.number,
+                                            style: const TextStyle(
+                                                color: _C.textPrimary,
+                                                fontSize: 14),
+                                            decoration: InputDecoration(
+                                              hintText: _repsCtrl.text
+                                                      .isNotEmpty
+                                                  ? _repsCtrl.text
+                                                  : '0',
+                                              hintStyle: const TextStyle(
+                                                  fontSize: 13,
+                                                  color: _C.textMuted),
+                                              prefixIcon: Icon(
+                                                  Icons.tag_rounded,
+                                                  size: 16,
+                                                  color: _C.green
+                                                      .withAlpha(160)),
+                                              contentPadding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 12,
+                                                      vertical: 10),
+                                            ),
+                                            validator: (v) {
+                                              if (v == null ||
+                                                  v.trim().isEmpty) {
+                                                return null;
+                                              }
+                                              final n = int.tryParse(v);
                                               return n == null || n < 0
                                                   ? 'Invalid'
                                                   : null;
@@ -1353,6 +1444,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         _repsCtrl.clear();
                         _weightCtrl.clear();
                         for (var c in _setWeightCtrls) c.clear();
+                        for (var c in _setRepsCtrls) c.clear();
                         _updateSetWeightCtrls(0);
                         setState(() => _selectedExIdx = null);
                       },
@@ -2202,12 +2294,32 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
               text: old.weight > 0 ? old.weight.toStringAsFixed(1) : ''));
     }
 
+    // Build initial per-set reps controllers
+    List<TextEditingController> setRepsCtrls;
+    if (old.setReps.isNotEmpty) {
+      setRepsCtrls = old.setReps
+          .map((r) => TextEditingController(text: r > 0 ? r.toString() : ''))
+          .toList();
+    } else {
+      final n = old.sets.clamp(0, 20);
+      setRepsCtrls = List.generate(
+          n,
+          (_) => TextEditingController(
+              text: old.reps > 0 ? old.reps.toString() : ''));
+    }
+
     void updateCtrls(int newCount) {
       while (setWeightCtrls.length > newCount) {
         setWeightCtrls.removeLast().dispose();
       }
       while (setWeightCtrls.length < newCount) {
         setWeightCtrls.add(TextEditingController());
+      }
+      while (setRepsCtrls.length > newCount) {
+        setRepsCtrls.removeLast().dispose();
+      }
+      while (setRepsCtrls.length < newCount) {
+        setRepsCtrls.add(TextEditingController(text: repsCtrl.text));
       }
     }
 
@@ -2255,7 +2367,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Set Weights ($displayUnit)',
+                        'Per Set Details ($displayUnit)',
                         style: TextStyle(
                             color: _C.amber.withAlpha(220),
                             fontSize: 13,
@@ -2263,37 +2375,49 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    ...setWeightCtrls.asMap().entries.map(
-                          (e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 32,
-                                  child: Text(
-                                    'S${e.key + 1}',
-                                    style: TextStyle(
-                                        color: _C.amber.withAlpha(200),
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 13),
-                                  ),
-                                ),
-                                Expanded(
-                                  child: TextField(
-                                    controller: e.value,
-                                    keyboardType:
-                                        const TextInputType.numberWithOptions(
-                                            decimal: true),
-                                    style: const TextStyle(
-                                        color: _C.textPrimary),
-                                    decoration: InputDecoration(
-                                        labelText: 'Set ${e.key + 1}'),
-                                  ),
-                                ),
-                              ],
+                    ...List.generate(
+                      setWeightCtrls.length,
+                      (i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 32,
+                              child: Text(
+                                'S${i + 1}',
+                                style: TextStyle(
+                                    color: _C.amber.withAlpha(200),
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13),
+                              ),
                             ),
-                          ),
+                            Expanded(
+                              child: TextField(
+                                controller: setWeightCtrls[i],
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                style:
+                                    const TextStyle(color: _C.textPrimary),
+                                decoration: InputDecoration(
+                                    labelText: 'Wt ${i + 1}'),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: setRepsCtrls[i],
+                                keyboardType: TextInputType.number,
+                                style:
+                                    const TextStyle(color: _C.textPrimary),
+                                decoration: InputDecoration(
+                                    labelText: 'Reps ${i + 1}'),
+                              ),
+                            ),
+                          ],
                         ),
+                      ),
+                    ),
                   ],
                 ],
               ),
@@ -2337,6 +2461,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
 
     if (ok != true) {
       for (var c in setWeightCtrls) c.dispose();
+      for (var c in setRepsCtrls) c.dispose();
       return;
     }
 
@@ -2345,11 +2470,14 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
     final list = json.decode(raw) as List;
     final newSetWeights =
         setWeightCtrls.map((c) => double.tryParse(c.text.trim()) ?? 0.0).toList();
+    final newSetReps =
+        setRepsCtrls.map((c) => int.tryParse(c.text.trim()) ?? 0).toList();
     final avgWeight =
         newSetWeights.isNotEmpty && newSetWeights.any((w) => w > 0)
             ? newSetWeights.reduce((a, b) => a + b) / newSetWeights.length
             : 0.0;
     for (var c in setWeightCtrls) c.dispose();
+    for (var c in setRepsCtrls) c.dispose();
 
     final updated = Exercise(
       id: old.id,
@@ -2358,6 +2486,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
       reps: int.parse(repsCtrl.text),
       weight: avgWeight,
       setWeights: newSetWeights,
+      setReps: newSetReps,
       unit: old.unit.isNotEmpty ? old.unit : _unit,
       date: old.date,
     );
@@ -2647,20 +2776,33 @@ class _ExHistoryCard extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 6),
-                          if (exercise.setWeights.isNotEmpty &&
-                              exercise.setWeights.any((w) => w > 0)) ...
+                          if ((exercise.setWeights.isNotEmpty &&
+                                  exercise.setWeights.any((w) => w > 0)) ||
+                              (exercise.setReps.isNotEmpty &&
+                                  exercise.setReps.any((r) => r > 0))) ...
                             [
                               Wrap(
                                 spacing: 6,
                                 runSpacing: 4,
                                 children: [
                                   _tag('${exercise.sets}s × ${exercise.reps}r'),
-                                  ...exercise.setWeights
-                                      .asMap()
-                                      .entries
-                                      .where((e) => e.value > 0)
-                                      .map((e) => _tag(
-                                          'S${e.key + 1}: ${e.value.toStringAsFixed(1)} $displayUnit')),
+                                  if (wt.isNotEmpty) _tag(wt),
+                                  ...List.generate(exercise.sets, (i) {
+                                    final hasW = i < exercise.setWeights.length &&
+                                        exercise.setWeights[i] > 0;
+                                    final hasR = i < exercise.setReps.length &&
+                                        exercise.setReps[i] > 0;
+                                    if (!hasW && !hasR) return null;
+                                    final weightStr = hasW
+                                        ? '${exercise.setWeights[i].toStringAsFixed(1)} $displayUnit'
+                                        : '';
+                                    final repsStr =
+                                        hasR ? '${exercise.setReps[i]}r' : '';
+                                    final label = [weightStr, repsStr]
+                                        .where((s) => s.isNotEmpty)
+                                        .join(' × ');
+                                    return _tag('S${i + 1}: $label');
+                                  }).whereType<Widget>(),
                                   _tag('Vol: ${exercise.volume.toStringAsFixed(0)}'),
                                 ],
                               ),
