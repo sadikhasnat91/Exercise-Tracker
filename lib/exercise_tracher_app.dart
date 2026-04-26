@@ -466,6 +466,7 @@ class Exercise {
     this.isProgressiveOverload = false,
   });
 
+  /// Raw volume in the exercise's own stored unit (for display only).
   double get volume {
     if (setWeights.isNotEmpty || setReps.isNotEmpty) {
       double total = 0;
@@ -480,6 +481,18 @@ class Exercise {
       return total;
     }
     return sets * reps * (weight > 0 ? weight : 1);
+  }
+
+  /// Volume normalised to KG for cross-unit comparison and analytics.
+  double get volumeInKg {
+    final factor = unit == 'LB' ? 1.0 / 2.20462 : 1.0;
+    return volume * factor;
+  }
+
+  /// avgWeight normalised to KG.
+  double get avgWeightInKg {
+    final factor = unit == 'LB' ? 1.0 / 2.20462 : 1.0;
+    return avgWeight * factor;
   }
 
   double get avgWeight {
@@ -732,11 +745,25 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic);
     _animCtrl.forward();
     _setsCtrl.addListener(_onSetsChanged);
+    _repsCtrl.addListener(_onRepsChanged);
   }
 
   void _onSetsChanged() {
     final n = int.tryParse(_setsCtrl.text) ?? 0;
     _updateSetWeightCtrls(n.clamp(0, 20));
+  }
+
+  // When the user types a global reps value, fill in any per-set reps
+  // controllers that are still empty so the value propagates automatically.
+  void _onRepsChanged() {
+    final globalReps = _repsCtrl.text.trim();
+    if (globalReps.isEmpty) return;
+    for (final c in _setRepsCtrls) {
+      if (c.text.trim().isEmpty) {
+        c.text = globalReps;
+        c.selection = TextSelection.collapsed(offset: globalReps.length);
+      }
+    }
   }
 
   void _updateSetWeightCtrls(int count) {
@@ -750,7 +777,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       _setRepsCtrls.removeLast().dispose();
     }
     while (_setRepsCtrls.length < count) {
-      _setRepsCtrls.add(TextEditingController(text: _repsCtrl.text));
+      // Pre-fill with global reps if already entered
+      _setRepsCtrls.add(TextEditingController(text: _repsCtrl.text.trim()));
     }
     if (mounted) setState(() {});
   }
@@ -766,6 +794,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   }
 
   Future<void> _saveExercise() async {
+    if (_formKey.currentState == null) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     try {
@@ -773,14 +802,32 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       final raw = prefs.getString('exercises') ?? '[]';
       List<dynamic> list = json.decode(raw);
       final name = _exerciseNameCtrl.text.trim();
-      final sets = int.parse(_setsCtrl.text);
-      final reps = int.parse(_repsCtrl.text);
+      final sets = int.parse(_setsCtrl.text.trim());
+      // Reps is optional: if left blank, per-set reps are used instead.
+      final globalReps = int.tryParse(_repsCtrl.text.trim()) ?? 0;
       final setWeights = _setWeightCtrls
           .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
           .toList();
+      // For per-set reps: fall back to globalReps if a per-set value is empty.
       final setReps = _setRepsCtrls
-          .map((c) => int.tryParse(c.text.trim()) ?? 0)
+          .map((c) => int.tryParse(c.text.trim()) ?? globalReps)
           .toList();
+      // Require at least one reps value (global or per-set).
+      final anyPerSetRep = setReps.any((r) => r > 0);
+      if (globalReps <= 0 && !anyPerSetRep) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Enter reps — either in the Reps field or per set'),
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
+      }
+      // The stored top-level reps = global value, or average of per-set reps.
+      final reps = globalReps > 0
+          ? globalReps
+          : (setReps.isNotEmpty
+              ? (setReps.reduce((a, b) => a + b) / setReps.length).round()
+              : 0);
       final avgWeight = setWeights.isNotEmpty && setWeights.any((w) => w > 0)
           ? setWeights.reduce((a, b) => a + b) / setWeights.length
           : double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
@@ -859,8 +906,13 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       if (same.isEmpty) return false;
       same.sort((a, b) => b.date.compareTo(a.date));
       final last = same.first;
-      return (sets * reps * (weight > 0 ? weight : 1)) > last.volume ||
-          (weight > last.weight && weight > 0) ||
+      // Normalise the new weight to KG for a fair unit-independent comparison.
+      final newWeightKg =
+          _selectedUnit == 'LB' ? weight / 2.20462 : weight;
+      final newVolumeKg =
+          sets * reps * (newWeightKg > 0 ? newWeightKg : 1);
+      return newVolumeKg > last.volumeInKg ||
+          (newWeightKg > last.avgWeightInKg && newWeightKg > 0) ||
           sets > last.sets ||
           reps > last.reps;
     } catch (_) {
@@ -1188,8 +1240,9 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                             iconColor: _C.cyan,
                             inputType: TextInputType.number,
                             validator: (v) {
-                              if (v?.isEmpty ?? true) return 'Required';
-                              final n = int.tryParse(v!);
+                              final trimmed = v?.trim() ?? '';
+                              if (trimmed.isEmpty) return 'Required';
+                              final n = int.tryParse(trimmed);
                               return n == null || n <= 0 ? 'Invalid' : null;
                             },
                           ),
@@ -1198,13 +1251,14 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         Expanded(
                           child: _glassField(
                             controller: _repsCtrl,
-                            label: 'Reps',
+                            label: 'Reps (optional)',
                             icon: Icons.tag_rounded,
                             iconColor: _C.green,
                             inputType: TextInputType.number,
                             validator: (v) {
-                              if (v?.isEmpty ?? true) return 'Required';
-                              final n = int.tryParse(v!);
+                              final trimmed = v?.trim() ?? '';
+                              if (trimmed.isEmpty) return null; // optional
+                              final n = int.tryParse(trimmed);
                               return n == null || n <= 0 ? 'Invalid' : null;
                             },
                           ),
@@ -2803,7 +2857,7 @@ class _ExHistoryCard extends StatelessWidget {
                                         .join(' × ');
                                     return _tag('S${i + 1}: $label');
                                   }).whereType<Widget>(),
-                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)}'),
+                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
                                 ],
                               ),
                             ]
@@ -2817,7 +2871,7 @@ class _ExHistoryCard extends StatelessWidget {
                                     _tag(wt),
                                   ],
                                   const SizedBox(width: 6),
-                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)}'),
+                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
                                 ],
                               ),
                             ],
@@ -2917,7 +2971,8 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     final f = _filtered;
     final total = f.length;
     final unique = f.map((e) => e.name.toLowerCase()).toSet().length;
-    final vol = f.fold(0.0, (s, e) => s + e.volume);
+    // Sum volumes normalised to KG so mixed-unit entries are comparable.
+    final vol = f.fold(0.0, (s, e) => s + e.volumeInKg);
     final prs = f.where((e) => e.isProgressiveOverload).length;
 
     return Scaffold(
@@ -2969,7 +3024,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                             Icons.fitness_center_rounded, _C.accent),
                         _statCard('Exercises', '$unique',
                             Icons.category_rounded, _C.cyan),
-                        _statCard('Volume ($_unit)',
+                        _statCard('Volume (KG)',
                             vol.toStringAsFixed(0),
                             Icons.monitor_weight_rounded, _C.amber),
                         _statCard(
