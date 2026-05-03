@@ -25,42 +25,132 @@ class _C {
   static const textPrimary = Color(0xFFF0F0F8);
   static const textSecondary = Color(0xFFB0B0CC);
   static const textMuted = Color(0xFF7070A0);
+
+  // Per-page accent palette [Workout, Plan, History, Analytics, Profile]
+  static const List<Color> pageAccents = [
+    Color(0xFF7C4DFF), // Workout – deep violet
+    Color(0xFF00BCD4), // Plan – ocean teal
+    Color(0xFFFFAB00), // History – amber gold
+    Color(0xFF00E676), // Analytics – emerald
+    Color(0xFFFF5252), // Profile – coral red
+  ];
+  static const List<String> pageImages = [
+    'assets/IM1.jpeg',
+    'assets/IM1.jpeg',
+    'assets/IM1.jpeg',
+    'assets/IM1.jpeg',
+    'assets/IM1.jpeg',
+  ];
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SHARED WIDGETS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-/// Full-page radial background image with dark overlay. Stays sticky.
-class _BgImage extends StatelessWidget {
-  const _BgImage();
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-PAGE BACKGROUND  — real gym images, unique overlay per route
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Each page gets its own gym image + accent color overlay
+class _PageBg extends StatelessWidget {
+  final int pageIndex;
+  const _PageBg({super.key, this.pageIndex = 0});
+
+  static const _images = _C.pageImages;
+  static const _overlays = [
+    Color(0x997C4DFF), // Workout  – violet
+    Color(0x9900BCD4), // Plan     – teal
+    Color(0x99FFAB00), // History  – amber
+    Color(0x9900E676), // Analytics– emerald
+    Color(0x99FF5252), // Profile  – coral
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: Image.asset(
-        'assets/IM1.jpeg',
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
-      ),
+    final idx = pageIndex.clamp(0, 4);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          _images[idx],
+          fit: BoxFit.cover,
+          alignment: Alignment.center,
+          errorBuilder: (_, __, ___) => const ColoredBox(color: Color(0xFF08090F)),
+        ),
+        // Per-page accent tint
+        ColoredBox(color: _overlays[idx].withAlpha(55)),
+        // Dark vignette — light enough to keep photo visible
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0x44000000), Color(0xAA000000)],
+              stops: [0.0, 1.0],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
 
-/// Dark gradient overlay on top of the image.
-class _BgOverlay extends StatelessWidget {
-  final List<Color> colors;
-  const _BgOverlay({required this.colors});
+/// Helper widget for hero image panels inside AppBar PreferredSize
+class _HeroImg extends StatelessWidget {
+  final int pageIndex;
+  final double height;
+  const _HeroImg({required this.pageIndex, this.height = 210});
+
+  static const _images = _C.pageImages;
+  static const _accents = [
+    Color(0x337C4DFF), // Workout – violet
+    Color(0x3300BCD4), // Plan    – teal
+    Color(0x33FFAB00), // History – amber
+    Color(0x3300E676), // Analytics– emerald
+    Color(0x33FF5252), // Profile – coral
+  ];
+  static const _alignments = [
+    Alignment(0.0, -0.2),
+    Alignment(0.3, 0.0),
+    Alignment(-0.2, 0.3),
+    Alignment(0.0, -0.4),
+    Alignment(-0.3, 0.1),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    return Positioned.fill(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: colors,
+    final idx = pageIndex.clamp(0, 4);
+    return SizedBox(
+      width: double.infinity,
+      height: height,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            _images[idx],
+            fit: BoxFit.cover,
+            alignment: _alignments[idx],
+            errorBuilder: (_, __, ___) => const ColoredBox(color: Color(0xFF08090F)),
           ),
-        ),
+          // Subtle per-page accent tint — very light so the photo shows
+          ColoredBox(color: _accents[idx]),
+          // Gradient: transparent at top so gym image is visible,
+          // dark at bottom so text is readable
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0x22000000), // barely-there at top
+                  Color(0x88000000), // medium at middle
+                  Color(0xCC000000), // darker at bottom for text legibility
+                ],
+                stops: [0.0, 0.5, 1.0],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -72,12 +162,14 @@ class _GlassCard extends StatelessWidget {
   final EdgeInsetsGeometry? padding;
   final BorderRadius? radius;
   final Color? borderColor;
+  final Color? glowColor;
 
   const _GlassCard({
     required this.child,
     this.padding,
     this.radius,
     this.borderColor,
+    this.glowColor,
   });
 
   @override
@@ -86,7 +178,7 @@ class _GlassCard extends StatelessWidget {
     return ClipRRect(
       borderRadius: br,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
           padding: padding ?? const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -94,8 +186,17 @@ class _GlassCard extends StatelessWidget {
             borderRadius: br,
             border: Border.all(
               color: borderColor ?? _C.border,
-              width: 0.6,
+              width: 0.7,
             ),
+            boxShadow: glowColor != null
+                ? [
+                    BoxShadow(
+                      color: glowColor!.withAlpha(45),
+                      blurRadius: 20,
+                      spreadRadius: -4,
+                    )
+                  ]
+                : null,
           ),
           child: child,
         ),
@@ -441,6 +542,16 @@ class ExerciseTrackerApp extends StatelessWidget {
 // MODELS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+/// Set modality options available when logging an exercise.
+const List<String> kSetTypes = [
+  'Normal',
+  'Superset',
+  'Drop Set',
+  'Giant Set',
+  'Pyramid',
+  'Rest-Pause',
+];
+
 class Exercise {
   final String id;
   final String name;
@@ -452,6 +563,13 @@ class Exercise {
   final String unit;
   final DateTime date;
   final bool isProgressiveOverload;
+  final String setType;
+  final List<String> pairedExercises;
+  // Per-set weights & reps for paired exercises in Superset / Giant Set
+  final List<double> pairedSetWeightsB;
+  final List<int> pairedSetRepsB;
+  final List<double> pairedSetWeightsC;
+  final List<int> pairedSetRepsC;
 
   Exercise({
     required this.id,
@@ -464,6 +582,12 @@ class Exercise {
     this.unit = 'KG',
     required this.date,
     this.isProgressiveOverload = false,
+    this.setType = 'Normal',
+    this.pairedExercises = const [],
+    this.pairedSetWeightsB = const [],
+    this.pairedSetRepsB = const [],
+    this.pairedSetWeightsC = const [],
+    this.pairedSetRepsC = const [],
   });
 
   /// Raw volume in the exercise's own stored unit (for display only).
@@ -513,6 +637,12 @@ class Exercise {
         'unit': unit,
         'date': date.toIso8601String(),
         'isProgressiveOverload': isProgressiveOverload,
+        'setType': setType,
+        'pairedExercises': pairedExercises,
+        'pairedSetWeightsB': pairedSetWeightsB,
+        'pairedSetRepsB': pairedSetRepsB,
+        'pairedSetWeightsC': pairedSetWeightsC,
+        'pairedSetRepsC': pairedSetRepsC,
       };
 
   factory Exercise.fromJson(Map<String, dynamic> json) => Exercise(
@@ -534,6 +664,28 @@ class Exercise {
             DateTime.now(),
         isProgressiveOverload:
             json['isProgressiveOverload'] as bool? ?? false,
+        setType: json['setType'] as String? ?? 'Normal',
+        pairedExercises: (json['pairedExercises'] as List<dynamic>?)
+                ?.map((e) => e as String)
+                .where((s) => s.isNotEmpty)
+                .toList() ??
+            [],
+        pairedSetWeightsB: (json['pairedSetWeightsB'] as List<dynamic>?)
+                ?.map((e) => (e as num).toDouble())
+                .toList() ??
+            [],
+        pairedSetRepsB: (json['pairedSetRepsB'] as List<dynamic>?)
+                ?.map((e) => (e as num).toInt())
+                .toList() ??
+            [],
+        pairedSetWeightsC: (json['pairedSetWeightsC'] as List<dynamic>?)
+                ?.map((e) => (e as num).toDouble())
+                .toList() ??
+            [],
+        pairedSetRepsC: (json['pairedSetRepsC'] as List<dynamic>?)
+                ?.map((e) => (e as num).toInt())
+                .toList() ??
+            [],
       );
 }
 
@@ -647,12 +799,18 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: Stack(
         children: [
-          // Persistent background image behind all pages
-          const _BgImage(),
-          const _BgOverlay(colors: [
-            Color(0xCC08090F),
-            Color(0xF508090F),
-          ]),
+          // Full-screen gym image background with per-page tint
+          Positioned.fill(
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 600),
+              transitionBuilder: (child, anim) =>
+                  FadeTransition(opacity: anim, child: child),
+              child: _PageBg(
+                key: ValueKey(_currentIndex),
+                pageIndex: _currentIndex,
+              ),
+            ),
+          ),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             child: KeyedSubtree(
@@ -663,46 +821,94 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
       extendBody: true,
-      bottomNavigationBar: ClipRRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            decoration: const BoxDecoration(
-              border:
-                  Border(top: BorderSide(color: _C.border, width: 0.5)),
-            ),
-            child: NavigationBar(
-              height: 72,
-              selectedIndex: _currentIndex,
-              onDestinationSelected: (i) =>
-                  setState(() => _currentIndex = i),
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.add_circle_outline_rounded),
-                  selectedIcon: Icon(Icons.add_circle_rounded),
-                  label: 'Workout',
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(36),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 32, sigmaY: 32),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 350),
+              curve: Curves.easeInOut,
+              height: 70,
+              decoration: BoxDecoration(
+                color: const Color(0xCC080912),
+                borderRadius: BorderRadius.circular(36),
+                border: Border.all(
+                  color: _C.pageAccents[_currentIndex].withAlpha(110),
+                  width: 1.0,
                 ),
-                NavigationDestination(
-                  icon: Icon(Icons.event_note_outlined),
-                  selectedIcon: Icon(Icons.event_note_rounded),
-                  label: 'Plan',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.history_rounded),
-                  label: 'History',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.insights_rounded),
-                  label: 'Analytics',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.person_outline_rounded),
-                  selectedIcon: Icon(Icons.person_rounded),
-                  label: 'Profile',
-                ),
-              ],
+                boxShadow: [
+                  BoxShadow(
+                    color: _C.pageAccents[_currentIndex].withAlpha(65),
+                    blurRadius: 30,
+                    spreadRadius: -8,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _navItem(0, Icons.add_circle_outline_rounded,
+                      Icons.add_circle_rounded, 'Workout'),
+                  _navItem(1, Icons.event_note_outlined,
+                      Icons.event_note_rounded, 'Plan'),
+                  _navItem(2, Icons.history_rounded,
+                      Icons.history_rounded, 'History'),
+                  _navItem(3, Icons.insights_rounded,
+                      Icons.insights_rounded, 'Analytics'),
+                  _navItem(4, Icons.person_outline_rounded,
+                      Icons.person_rounded, 'Profile'),
+                ],
+              ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _navItem(
+      int idx, IconData off, IconData on, String label) {
+    final sel = _currentIndex == idx;
+    final accent = _C.pageAccents[idx];
+    return GestureDetector(
+      onTap: () => setState(() => _currentIndex = idx),
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: sel ? accent.withAlpha(38) : Colors.transparent,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              transitionBuilder: (child, anim) => ScaleTransition(
+                  scale: anim, child: child),
+              child: Icon(
+                sel ? on : off,
+                key: ValueKey(sel),
+                color: sel ? accent : _C.textMuted,
+                size: 22,
+              ),
+            ),
+            const SizedBox(height: 3),
+            AnimatedDefaultTextStyle(
+              duration: const Duration(milliseconds: 220),
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                color: sel ? accent : _C.textMuted,
+              ),
+              child: Text(label),
+            ),
+          ],
         ),
       ),
     );
@@ -731,7 +937,16 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   List<TextEditingController> _setRepsCtrls = [];
   bool _isSaving = false;
   String _selectedUnit = 'KG';
+  String _setType = 'Normal';
   int? _selectedExIdx;
+  // Paired exercise name controllers (Superset = B; Giant Set = B + C)
+  final _pairedExCtrl1 = TextEditingController();
+  final _pairedExCtrl2 = TextEditingController();
+  // Per-set weight/reps for paired exercises B and C
+  List<TextEditingController> _pairedWeightCtrlsB = [];
+  List<TextEditingController> _pairedRepsCtrlsB = [];
+  List<TextEditingController> _pairedWeightCtrlsC = [];
+  List<TextEditingController> _pairedRepsCtrlsC = [];
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
 
@@ -745,7 +960,6 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic);
     _animCtrl.forward();
     _setsCtrl.addListener(_onSetsChanged);
-    _repsCtrl.addListener(_onRepsChanged);
   }
 
   void _onSetsChanged() {
@@ -753,33 +967,17 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _updateSetWeightCtrls(n.clamp(0, 20));
   }
 
-  // When the user types a global reps value, fill in any per-set reps
-  // controllers that are still empty so the value propagates automatically.
-  void _onRepsChanged() {
-    final globalReps = _repsCtrl.text.trim();
-    if (globalReps.isEmpty) return;
-    for (final c in _setRepsCtrls) {
-      if (c.text.trim().isEmpty) {
-        c.text = globalReps;
-        c.selection = TextSelection.collapsed(offset: globalReps.length);
-      }
-    }
-  }
-
   void _updateSetWeightCtrls(int count) {
-    while (_setWeightCtrls.length > count) {
-      _setWeightCtrls.removeLast().dispose();
+    void _resize(List<TextEditingController> list) {
+      while (list.length > count) list.removeLast().dispose();
+      while (list.length < count) list.add(TextEditingController());
     }
-    while (_setWeightCtrls.length < count) {
-      _setWeightCtrls.add(TextEditingController());
-    }
-    while (_setRepsCtrls.length > count) {
-      _setRepsCtrls.removeLast().dispose();
-    }
-    while (_setRepsCtrls.length < count) {
-      // Pre-fill with global reps if already entered
-      _setRepsCtrls.add(TextEditingController(text: _repsCtrl.text.trim()));
-    }
+    _resize(_setWeightCtrls);
+    _resize(_setRepsCtrls);
+    _resize(_pairedWeightCtrlsB);
+    _resize(_pairedRepsCtrlsB);
+    _resize(_pairedWeightCtrlsC);
+    _resize(_pairedRepsCtrlsC);
     if (mounted) setState(() {});
   }
 
@@ -832,6 +1030,23 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
           ? setWeights.reduce((a, b) => a + b) / setWeights.length
           : double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
       final isOverload = _checkOverload(list, name, sets, reps, avgWeight);
+      final pairedSetWeightsB = _pairedWeightCtrlsB
+          .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
+          .toList();
+      final pairedSetRepsB = _pairedRepsCtrlsB
+          .map((c) => int.tryParse(c.text.trim()) ?? 0)
+          .toList();
+      final pairedSetWeightsC = _pairedWeightCtrlsC
+          .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
+          .toList();
+      final pairedSetRepsC = _pairedRepsCtrlsC
+          .map((c) => int.tryParse(c.text.trim()) ?? 0)
+          .toList();
+      final pairedExercises = [
+        if (_setType == 'Superset' || _setType == 'Giant Set')
+          _pairedExCtrl1.text.trim(),
+        if (_setType == 'Giant Set') _pairedExCtrl2.text.trim(),
+      ].where((s) => s.isNotEmpty).toList();
       final ex = Exercise(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
@@ -843,6 +1058,12 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         unit: _selectedUnit,
         date: DateTime.now(),
         isProgressiveOverload: isOverload,
+        setType: _setType,
+        pairedExercises: pairedExercises,
+        pairedSetWeightsB: pairedSetWeightsB,
+        pairedSetRepsB: pairedSetRepsB,
+        pairedSetWeightsC: pairedSetWeightsC,
+        pairedSetRepsC: pairedSetRepsC,
       );
       list.insert(0, ex.toJson());
       await prefs.setString('exercises', json.encode(list));
@@ -883,7 +1104,16 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       _weightCtrl.clear();
       for (var c in _setWeightCtrls) c.clear();
       _updateSetWeightCtrls(0);
-      setState(() => _selectedExIdx = null);
+      _pairedExCtrl1.clear();
+      _pairedExCtrl2.clear();
+      for (var c in _pairedWeightCtrlsB) c.clear();
+      for (var c in _pairedRepsCtrlsB) c.clear();
+      for (var c in _pairedWeightCtrlsC) c.clear();
+      for (var c in _pairedRepsCtrlsC) c.clear();
+      setState(() {
+        _selectedExIdx = null;
+        _setType = 'Normal';
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -927,8 +1157,14 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _setsCtrl.dispose();
     _repsCtrl.dispose();
     _weightCtrl.dispose();
+    _pairedExCtrl1.dispose();
+    _pairedExCtrl2.dispose();
     for (var c in _setWeightCtrls) c.dispose();
     for (var c in _setRepsCtrls) c.dispose();
+    for (var c in _pairedWeightCtrlsB) c.dispose();
+    for (var c in _pairedRepsCtrlsB) c.dispose();
+    for (var c in _pairedWeightCtrlsC) c.dispose();
+    for (var c in _pairedRepsCtrlsC) c.dispose();
     super.dispose();
   }
 
@@ -946,35 +1182,20 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  Image.asset('assets/IM1.jpeg',
-                      fit: BoxFit.cover,
-                      alignment: const Alignment(0, -0.3)),
-                  // Gradient over image
+                  // Workout page background — gym image, violet theme
+                  const _HeroImg(pageIndex: 0, height: 260),
+                  // Subtle bottom fade to blend into form area
                   const DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          Color(0x99000000),
-                          Color(0xBB050510),
-                          Color(0xFF08090F),
-                        ],
-                        stops: [0.0, 0.65, 1.0],
-                      ),
-                    ),
-                  ),
-                  // Left-right vignette
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.centerLeft,
-                        end: Alignment.centerRight,
-                        colors: [
-                          Color(0x66000000),
                           Colors.transparent,
-                          Color(0x66000000),
+                          Color(0x88000000),
+                          Color(0xFF06060F),
                         ],
+                        stops: [0.0, 0.6, 1.0],
                       ),
                     ),
                   ),
@@ -1252,6 +1473,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                           child: _glassField(
                             controller: _repsCtrl,
                             label: 'Reps (optional)',
+                            // Global reps used only as save-time fallback for
+                            // empty per-set reps. No live propagation.
                             icon: Icons.tag_rounded,
                             iconColor: _C.green,
                             inputType: TextInputType.number,
@@ -1265,8 +1488,156 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         ),
                       ],
                     ),
+                    const SizedBox(height: 16),
+
+                    // ── Set Type Selector ──
+                    _GlassCard(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.layers_rounded,
+                                  size: 16, color: _C.cyan),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Set Type',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: _C.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            height: 34,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: kSetTypes.map((type) {
+                                final isSelected = _setType == type;
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.only(right: 8),
+                                  child: GestureDetector(
+                                    onTap: () =>
+                                        setState(() => _setType = type),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(
+                                          milliseconds: 200),
+                                      padding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 14,
+                                              vertical: 6),
+                                      decoration: BoxDecoration(
+                                        gradient: isSelected
+                                            ? const LinearGradient(
+                                                colors: [
+                                                    _C.cyan,
+                                                    _C.accent
+                                                  ])
+                                            : null,
+                                        color: isSelected
+                                            ? null
+                                            : Colors.white
+                                                .withAlpha(12),
+                                        borderRadius:
+                                            BorderRadius.circular(20),
+                                        border: Border.all(
+                                          color: isSelected
+                                              ? Colors.transparent
+                                              : _C.border,
+                                          width: 0.8,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        type,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: isSelected
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                          color: isSelected
+                                              ? Colors.white
+                                              : _C.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                          // ── Context fields based on set type ──
+                          if (_setType == 'Superset' ||
+                              _setType == 'Giant Set') ...
+                            [
+                              const SizedBox(height: 12),
+                              const Divider(
+                                  color: _C.border, height: 1),
+                              const SizedBox(height: 12),
+                              Text(
+                                _setType == 'Superset'
+                                    ? 'Paired exercise'
+                                    : 'Additional exercises',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: _C.textMuted,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.5),
+                              ),
+                              const SizedBox(height: 8),
+                              _inlineField(
+                                controller: _pairedExCtrl1,
+                                hint: 'Exercise B (e.g. Cable Fly)',
+                                icon: Icons.fitness_center_rounded,
+                                iconColor: _C.cyan,
+                              ),
+                              if (_setType == 'Giant Set') ...
+                                [
+                                  const SizedBox(height: 8),
+                                  _inlineField(
+                                    controller: _pairedExCtrl2,
+                                    hint: 'Exercise C (e.g. Push Up)',
+                                    icon: Icons.fitness_center_rounded,
+                                    iconColor: _C.accentLight,
+                                  ),
+                                ],
+                            ],
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 12),
 
+                    if (_setType == 'Drop Set' &&
+                        _setWeightCtrls.isNotEmpty) ...
+                      [
+                        _GlassCard(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 8),
+                          borderColor: _C.coral.withAlpha(80),
+                          child: Row(
+                            children: [
+                              Icon(Icons.arrow_downward_rounded,
+                                  size: 14,
+                                  color: _C.coral.withAlpha(200)),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Drop Set — enter weights in decreasing order below. Reps can increase each drop.',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: _C.textSecondary),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                     if (_setWeightCtrls.isNotEmpty) ...[
                       ClipRRect(
                         borderRadius: BorderRadius.circular(14),
@@ -1288,9 +1659,11 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                     Icon(Icons.monitor_weight_rounded,
                                         size: 16, color: _C.amber),
                                     const SizedBox(width: 8),
-                                    const Text(
-                                      'Per Set Details — optional',
-                                      style: TextStyle(
+                                    Text(
+                                      _setType == 'Drop Set'
+                                      ? 'Drop Set Details'
+                                      : 'Per Set Details — optional',
+                                      style: const TextStyle(
                                           fontSize: 12,
                                           color: _C.textSecondary,
                                           fontWeight: FontWeight.w600),
@@ -1326,17 +1699,58 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                 ),
                                 const SizedBox(height: 6),
                                 ...List.generate(_setWeightCtrls.length, (i) {
+                                  // For drop set, compute drop% from previous
+                                  String? dropPct;
+                                  if (_setType == 'Drop Set' && i > 0) {
+                                    final prev = double.tryParse(
+                                        _setWeightCtrls[i - 1].text.trim());
+                                    final curr = double.tryParse(
+                                        _setWeightCtrls[i].text.trim());
+                                    if (prev != null &&
+                                        curr != null &&
+                                        prev > 0) {
+                                      final pct =
+                                          ((prev - curr) / prev * 100)
+                                              .round();
+                                      dropPct = '$pct% drop';
+                                    }
+                                  }
+                                  final labelColor = _setType == 'Drop Set'
+                                      ? _C.coral
+                                      : _C.amber;
+                                  final labelText = _setType == 'Drop Set'
+                                      ? 'D${i + 1}'
+                                      : 'S${i + 1}';
                                   return Padding(
                                     padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
+                                        if (dropPct != null)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                                left: 44, bottom: 3),
+                                            child: Text(
+                                              dropPct,
+                                              style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: _C.coral
+                                                      .withAlpha(180),
+                                                  fontWeight:
+                                                      FontWeight.w600),
+                                            ),
+                                          ),
+                                        Row(
+                                          children: [
                                         SizedBox(
                                           width: 36,
                                           child: Text(
-                                            'S${i + 1}',
+                                            labelText,
                                             textAlign: TextAlign.center,
                                             style: TextStyle(
-                                              color: _C.amber.withAlpha(200),
+                                              color: labelColor
+                                                  .withAlpha(200),
                                               fontWeight: FontWeight.w700,
                                               fontSize: 13,
                                             ),
@@ -1360,13 +1774,16 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                               prefixIcon: Icon(
                                                   Icons.fitness_center_rounded,
                                                   size: 16,
-                                                  color: _C.amber
+                                                  color: labelColor
                                                       .withAlpha(160)),
                                               contentPadding:
                                                   const EdgeInsets.symmetric(
                                                       horizontal: 12,
                                                       vertical: 10),
                                             ),
+                                            onChanged: _setType == 'Drop Set'
+                                                ? (_) => setState(() {})
+                                                : null,
                                             validator: (v) {
                                               if (v == null ||
                                                   v.trim().isEmpty) {
@@ -1389,10 +1806,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                                 color: _C.textPrimary,
                                                 fontSize: 14),
                                             decoration: InputDecoration(
-                                              hintText: _repsCtrl.text
-                                                      .isNotEmpty
-                                                  ? _repsCtrl.text
-                                                  : '0',
+                                              hintText: '0',
                                               hintStyle: const TextStyle(
                                                   fontSize: 13,
                                                   color: _C.textMuted),
@@ -1418,6 +1832,26 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                             },
                                           ),
                                         ),
+                                      ],
+                                        ),
+                                        // Sub-rows for paired exercises
+                                        if ((_setType == 'Superset' ||
+                                                _setType == 'Giant Set') &&
+                                            i < _pairedWeightCtrlsB.length)
+                                          _pairedSetRow(
+                                            label: 'B',
+                                            color: _C.cyan,
+                                            weightCtrl: _pairedWeightCtrlsB[i],
+                                            repsCtrl: _pairedRepsCtrlsB[i],
+                                          ),
+                                        if (_setType == 'Giant Set' &&
+                                            i < _pairedWeightCtrlsC.length)
+                                          _pairedSetRow(
+                                            label: 'C',
+                                            color: _C.accentLight,
+                                            weightCtrl: _pairedWeightCtrlsC[i],
+                                            repsCtrl: _pairedRepsCtrlsC[i],
+                                          ),
                                       ],
                                     ),
                                   );
@@ -1476,6 +1910,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
+                            color: Colors.white,
                           ),
                         ),
                         style: FilledButton.styleFrom(
@@ -1500,7 +1935,16 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         for (var c in _setWeightCtrls) c.clear();
                         for (var c in _setRepsCtrls) c.clear();
                         _updateSetWeightCtrls(0);
-                        setState(() => _selectedExIdx = null);
+                        _pairedExCtrl1.clear();
+                        _pairedExCtrl2.clear();
+                        for (var c in _pairedWeightCtrlsB) c.clear();
+                        for (var c in _pairedRepsCtrlsB) c.clear();
+                        for (var c in _pairedWeightCtrlsC) c.clear();
+                        for (var c in _pairedRepsCtrlsC) c.clear();
+                        setState(() {
+                          _selectedExIdx = null;
+                          _setType = 'Normal';
+                        });
                       },
                       child: const Text('Clear Form',
                           style: TextStyle(color: _C.textMuted)),
@@ -1547,6 +1991,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     required String label,
     required IconData icon,
     required Color iconColor,
+    FocusNode? focusNode,
     TextInputType? inputType,
     TextCapitalization capitalization = TextCapitalization.none,
     String? Function(String?)? validator,
@@ -1557,6 +2002,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
         child: TextFormField(
           controller: controller,
+          focusNode: focusNode,
           keyboardType: inputType,
           textCapitalization: capitalization,
           validator: validator,
@@ -1566,6 +2012,112 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
             prefixIcon: Icon(icon, color: iconColor, size: 20),
           ),
         ),
+      ),
+    );
+  }
+
+  /// Compact text field used inside the set-type card (no backdrop blur).
+  Widget _inlineField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    required Color iconColor,
+  }) {
+    return TextField(
+      controller: controller,
+      textCapitalization: TextCapitalization.words,
+      style: const TextStyle(color: _C.textPrimary, fontSize: 13),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(color: _C.textMuted, fontSize: 12),
+        prefixIcon: Icon(icon, color: iconColor, size: 16),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        isDense: true,
+      ),
+    );
+  }
+
+  /// A sub-row for a paired exercise (B or C) within a set.
+  Widget _pairedSetRow({
+    required String label,
+    required Color color,
+    required TextEditingController weightCtrl,
+    required TextEditingController repsCtrl,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          Container(
+            width: 28,
+            height: 28,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              borderRadius: BorderRadius.circular(7),
+              border: Border.all(color: color.withAlpha(80), width: 0.7),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextFormField(
+              controller: weightCtrl,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              style:
+                  const TextStyle(color: _C.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: '0.0',
+                hintStyle:
+                    const TextStyle(fontSize: 12, color: _C.textMuted),
+                prefixIcon: Icon(Icons.fitness_center_rounded,
+                    size: 14, color: color.withAlpha(160)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return null;
+                final n = double.tryParse(v);
+                return n == null || n < 0 ? 'Invalid' : null;
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextFormField(
+              controller: repsCtrl,
+              keyboardType: TextInputType.number,
+              style:
+                  const TextStyle(color: _C.textPrimary, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: '0',
+                hintStyle:
+                    const TextStyle(fontSize: 12, color: _C.textMuted),
+                prefixIcon: Icon(Icons.tag_rounded,
+                    size: 14, color: color.withAlpha(160)),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                isDense: true,
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return null;
+                final n = int.tryParse(v);
+                return n == null || n < 0 ? 'Invalid' : null;
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1765,73 +2317,122 @@ class _WorkoutPlanPageState extends State<WorkoutPlanPage>
         final fabLabel = _tab.index == 0 ? 'Add Gym Plan' : 'Add Diet Plan';
         return Scaffold(
           backgroundColor: Colors.transparent,
-          appBar: AppBar(
-            title: Column(
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(270),
+            child: Stack(
+              fit: StackFit.expand,
+              clipBehavior: Clip.hardEdge,
               children: [
-                const Text("My Plans"),
-                Text(today,
-                    style: const TextStyle(
-                        fontSize: 11,
-                        color: _C.textSecondary,
-                        fontWeight: FontWeight.w400)),
-              ],
-            ),
-            bottom: PreferredSize(
-              preferredSize: const Size.fromHeight(48),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0x33FFFFFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: _C.border),
-                      ),
-                      child: TabBar(
-                        controller: _tab,
-                        dividerColor: Colors.transparent,
-                        indicatorSize: TabBarIndicatorSize.tab,
-                        indicator: BoxDecoration(
-                          gradient: const LinearGradient(
-                              colors: [_C.accent, Color(0xFF6200EA)]),
-                          borderRadius: BorderRadius.circular(10),
+                // Full gym image
+                const _HeroImg(pageIndex: 1, height: 270),
+                // Text — positioned above the TabBar
+                Positioned(
+                  left: 24,
+                  bottom: 72,
+                  right: 24,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4).withAlpha(38),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: const Color(0xFF00BCD4).withAlpha(90)),
                         ),
-                        labelStyle: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700),
-                        unselectedLabelStyle: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w500),
-                        labelColor: Colors.white,
-                        unselectedLabelColor: _C.textMuted,
-                        tabs: const [
-                          Tab(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.fitness_center_rounded, size: 15),
-                                SizedBox(width: 6),
-                                Text('Gym Plan'),
-                              ],
-                            ),
+                        child: Text(
+                          _tab.index == 0 ? 'GYM SCHEDULE' : 'NUTRITION PLAN',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF00BCD4),
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1.2),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('My Plans',
+                          style: TextStyle(
+                            fontSize: 38,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            height: 1.0,
+                            shadows: [
+                              Shadow(
+                                  color: Colors.black54,
+                                  blurRadius: 10,
+                                  offset: Offset(0, 3))
+                            ],
+                          )),
+                      const SizedBox(height: 4),
+                      Text(today,
+                          style: const TextStyle(
+                              fontSize: 13, color: _C.textSecondary)),
+                    ],
+                  ),
+                ),
+                // TabBar — pinned to the bottom of the header
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 8,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0x33FFFFFF),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _C.border),
+                        ),
+                        child: TabBar(
+                          controller: _tab,
+                          dividerColor: Colors.transparent,
+                          indicatorSize: TabBarIndicatorSize.tab,
+                          indicator: BoxDecoration(
+                            gradient: const LinearGradient(colors: [
+                              Color(0xFF00BCD4),
+                              Color(0xFF0097A7)
+                            ]),
+                            borderRadius: BorderRadius.circular(10),
                           ),
-                          Tab(
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.restaurant_rounded, size: 15),
-                                SizedBox(width: 6),
-                                Text('Diet Plan'),
-                              ],
+                          labelStyle: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w700),
+                          unselectedLabelStyle: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w500),
+                          labelColor: Colors.white,
+                          unselectedLabelColor: _C.textMuted,
+                          tabs: const [
+                            Tab(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.fitness_center_rounded, size: 15),
+                                  SizedBox(width: 6),
+                                  Text('Gym Plan'),
+                                ],
+                              ),
                             ),
-                          ),
-                        ],
+                            Tab(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.restaurant_rounded, size: 15),
+                                  SizedBox(width: 6),
+                                  Text('Diet Plan'),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ),
           ),
           body: Stack(
@@ -2589,15 +3190,71 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
     final grouped = _groupByDate();
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('History'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded,
-                color: _C.textSecondary),
-            onPressed: _loadData,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(210),
+        child: ClipRect(
+          child: Stack(
+          children: [
+            const _HeroImg(pageIndex: 2, height: 210),
+            Positioned(
+              left: 24,
+              bottom: 22,
+              right: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFAB00).withAlpha(38),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                          color: const Color(0xFFFFAB00).withAlpha(90)),
+                    ),
+                    child: const Text('WORKOUT LOG',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFFFFAB00),
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2)),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('History',
+                      style: TextStyle(
+                        fontSize: 38,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        height: 1.0,
+                        shadows: [
+                          Shadow(
+                              color: Colors.black54,
+                              blurRadius: 10,
+                              offset: Offset(0, 3))
+                        ],
+                      )),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_exercises.length} session${_exercises.length == 1 ? '' : 's'} recorded',
+                    style: const TextStyle(
+                        fontSize: 13, color: _C.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              right: 8,
+              bottom: 14,
+              child: IconButton(
+                icon: const Icon(Icons.refresh_rounded,
+                    color: _C.textSecondary),
+                onPressed: _loadData,
+              ),
+            ),
+          ],
           ),
-        ],
+        ), // ClipRect
       ),
       body: _isLoading
           ? const Center(
@@ -2632,15 +3289,15 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                                             horizontal: 12, vertical: 5),
                                     decoration: BoxDecoration(
                                       gradient: LinearGradient(colors: [
-                                        _C.accent.withAlpha(40),
-                                        _C.accent.withAlpha(15)
+                                        const Color(0xFFFFAB00).withAlpha(40),
+                                        const Color(0xFFFFAB00).withAlpha(15)
                                       ]),
                                     ),
                                     child: Text(
                                       _dateLabel(date),
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w700,
-                                        color: _C.accentLight,
+                                        color: Color(0xFFFFAB00),
                                         fontSize: 13,
                                       ),
                                     ),
@@ -2796,6 +3453,38 @@ class _ExHistoryCard extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                              if (exercise.setType != 'Normal')
+                                Container(
+                                  margin: const EdgeInsets.only(right: 6),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                        colors: [_C.cyan, _C.accent]),
+                                    borderRadius:
+                                        BorderRadius.circular(8),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.layers_rounded,
+                                          size: 11,
+                                          color: Colors.white),
+                                      const SizedBox(width: 3),
+                                      Flexible(
+                                        child: Text(
+                                          exercise.setType,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               if (exercise.isProgressiveOverload)
                                 Container(
                                   padding: const EdgeInsets.symmetric(
@@ -2830,48 +3519,182 @@ class _ExHistoryCard extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 6),
+                          if (exercise.pairedExercises.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  for (int pi = 0;
+                                      pi < exercise.pairedExercises.length;
+                                      pi++)
+                                    _tag(
+                                      '${String.fromCharCode(66 + pi)}: ${exercise.pairedExercises[pi]}',
+                                      color: _C.cyan.withAlpha(30),
+                                    ),
+                                ],
+                              ),
+                            ),
                           if ((exercise.setWeights.isNotEmpty &&
                                   exercise.setWeights.any((w) => w > 0)) ||
                               (exercise.setReps.isNotEmpty &&
                                   exercise.setReps.any((r) => r > 0))) ...
                             [
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 4,
-                                children: [
-                                  _tag('${exercise.sets}s × ${exercise.reps}r'),
-                                  if (wt.isNotEmpty) _tag(wt),
-                                  ...List.generate(exercise.sets, (i) {
-                                    final hasW = i < exercise.setWeights.length &&
-                                        exercise.setWeights[i] > 0;
-                                    final hasR = i < exercise.setReps.length &&
-                                        exercise.setReps[i] > 0;
-                                    if (!hasW && !hasR) return null;
-                                    final weightStr = hasW
-                                        ? '${exercise.setWeights[i].toStringAsFixed(1)} $displayUnit'
-                                        : '';
-                                    final repsStr =
-                                        hasR ? '${exercise.setReps[i]}r' : '';
-                                    final label = [weightStr, repsStr]
-                                        .where((s) => s.isNotEmpty)
-                                        .join(' × ');
-                                    return _tag('S${i + 1}: $label');
-                                  }).whereType<Widget>(),
-                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
-                                ],
-                              ),
+                              // For superset / giant set show grouped per-set
+                              if (exercise.setType == 'Superset' ||
+                                  exercise.setType == 'Giant Set')
+                                Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    ...List.generate(exercise.sets, (i) {
+                                      final hasW = i <
+                                              exercise.setWeights.length &&
+                                          exercise.setWeights[i] > 0;
+                                      final hasR =
+                                          i < exercise.setReps.length &&
+                                              exercise.setReps[i] > 0;
+                                      final weightStr = hasW
+                                          ? '${exercise.setWeights[i].toStringAsFixed(1)} $displayUnit'
+                                          : '';
+                                      final repsStr = hasR
+                                          ? '${exercise.setReps[i]}r'
+                                          : '';
+                                      final aLabel =
+                                          [weightStr, repsStr]
+                                              .where((s) => s.isNotEmpty)
+                                              .join(' × ');
+
+                                      // Exercise B
+                                      final bHasW = i <
+                                              exercise
+                                                  .pairedSetWeightsB.length &&
+                                          exercise.pairedSetWeightsB[i] > 0;
+                                      final bHasR = i <
+                                              exercise.pairedSetRepsB.length &&
+                                          exercise.pairedSetRepsB[i] > 0;
+                                      final bW = bHasW
+                                          ? '${exercise.pairedSetWeightsB[i].toStringAsFixed(1)} $displayUnit'
+                                          : '';
+                                      final bR = bHasR
+                                          ? '${exercise.pairedSetRepsB[i]}r'
+                                          : '';
+                                      final bLabel = [bW, bR]
+                                          .where((s) => s.isNotEmpty)
+                                          .join(' × ');
+
+                                      // Exercise C (Giant Set only)
+                                      final cHasW = exercise.setType ==
+                                              'Giant Set' &&
+                                          i <
+                                              exercise
+                                                  .pairedSetWeightsC.length &&
+                                          exercise.pairedSetWeightsC[i] > 0;
+                                      final cHasR = exercise.setType ==
+                                              'Giant Set' &&
+                                          i <
+                                              exercise.pairedSetRepsC.length &&
+                                          exercise.pairedSetRepsC[i] > 0;
+                                      final cW = cHasW
+                                          ? '${exercise.pairedSetWeightsC[i].toStringAsFixed(1)} $displayUnit'
+                                          : '';
+                                      final cR = cHasR
+                                          ? '${exercise.pairedSetRepsC[i]}r'
+                                          : '';
+                                      final cLabel = [cW, cR]
+                                          .where((s) => s.isNotEmpty)
+                                          .join(' × ');
+
+                                      return Padding(
+                                        padding: const EdgeInsets.only(
+                                            bottom: 5),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Set ${i + 1}',
+                                              style: const TextStyle(
+                                                  fontSize: 10,
+                                                  color: _C.textMuted,
+                                                  fontWeight:
+                                                      FontWeight.w600),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Wrap(
+                                              spacing: 5,
+                                              runSpacing: 4,
+                                              children: [
+                                                if (aLabel.isNotEmpty)
+                                                  _tag('A: $aLabel'),
+                                                if (bLabel.isNotEmpty)
+                                                  _tag('B: $bLabel',
+                                                      color: _C.cyan
+                                                          .withAlpha(30)),
+                                                if (cLabel.isNotEmpty)
+                                                  _tag('C: $cLabel',
+                                                      color: _C.accentLight
+                                                          .withAlpha(30)),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }),
+                                    _tag(
+                                        'Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
+                                  ],
+                                )
+                              else
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 4,
+                                  children: [
+                                    _tag(
+                                        '${exercise.sets}s × ${exercise.reps}r'),
+                                    if (wt.isNotEmpty) _tag(wt),
+                                    ...List.generate(exercise.sets, (i) {
+                                      final hasW = i <
+                                              exercise.setWeights.length &&
+                                          exercise.setWeights[i] > 0;
+                                      final hasR =
+                                          i < exercise.setReps.length &&
+                                              exercise.setReps[i] > 0;
+                                      if (!hasW && !hasR) return null;
+                                      final weightStr = hasW
+                                          ? '${exercise.setWeights[i].toStringAsFixed(1)} $displayUnit'
+                                          : '';
+                                      final repsStr = hasR
+                                          ? '${exercise.setReps[i]}r'
+                                          : '';
+                                      final label = [weightStr, repsStr]
+                                          .where((s) => s.isNotEmpty)
+                                          .join(' × ');
+                                      final prefix =
+                                          exercise.setType == 'Drop Set'
+                                              ? 'D${i + 1}'
+                                              : 'S${i + 1}';
+                                      return _tag('$prefix: $label');
+                                    }).whereType<Widget>(),
+                                    _tag(
+                                        'Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
+                                  ],
+                                ),
                             ]
                           else ...
                             [
                               Row(
                                 children: [
-                                  _tag('${exercise.sets}s × ${exercise.reps}r'),
+                                  _tag(
+                                      '${exercise.sets}s × ${exercise.reps}r'),
                                   if (wt.isNotEmpty) ...[
                                     const SizedBox(width: 6),
                                     _tag(wt),
                                   ],
                                   const SizedBox(width: 6),
-                                  _tag('Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
+                                  _tag(
+                                      'Vol: ${exercise.volume.toStringAsFixed(0)} ${exercise.unit}'),
                                 ],
                               ),
                             ],
@@ -2893,11 +3716,11 @@ class _ExHistoryCard extends StatelessWidget {
     );
   }
 
-  Widget _tag(String text) {
+  Widget _tag(String text, {Color? color}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: Colors.white.withAlpha(12),
+        color: color ?? Colors.white.withAlpha(12),
         borderRadius: BorderRadius.circular(7),
         border: Border.all(color: Colors.white12, width: 0.5),
       ),
@@ -2977,19 +3800,72 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('Analytics'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded,
-                color: _C.textSecondary),
-            onPressed: _load,
-          ),
-        ],
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(210),
+        child: Stack(
+          children: [
+            const _HeroImg(pageIndex: 3, height: 210),
+            Positioned(
+              left: 24,
+              bottom: 22,
+              right: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _C.green.withAlpha(38),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _C.green.withAlpha(90)),
+                    ),
+                    child: const Text('YOUR STATS',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: _C.green,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2)),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Analytics',
+                      style: TextStyle(
+                        fontSize: 38,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        height: 1.0,
+                        shadows: [
+                          Shadow(
+                              color: Colors.black54,
+                              blurRadius: 10,
+                              offset: Offset(0, 3))
+                        ],
+                      )),
+                  const SizedBox(height: 4),
+                  Text(
+                    _period == 'Week' ? 'Last 7 days overview' : 'Last 30 days overview',
+                    style: const TextStyle(
+                        fontSize: 13, color: _C.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              right: 8,
+              bottom: 14,
+              child: IconButton(
+                icon: const Icon(Icons.refresh_rounded,
+                    color: _C.textSecondary),
+                onPressed: _load,
+              ),
+            ),
+          ],
+        ),
       ),
       body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: _C.accent))
+              child: CircularProgressIndicator(color: _C.green))
           : _exercises.isEmpty
               ? _buildEmptyState(Icons.insights_rounded, 'No Data Yet',
                   'Log workouts to see analytics')
@@ -3054,8 +3930,8 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             gradient: active
-                ? const LinearGradient(
-                    colors: [_C.accent, Color(0xFF6200EA)])
+                ? LinearGradient(
+                    colors: [_C.green, const Color(0xFF00C853)])
                 : null,
             borderRadius: BorderRadius.circular(10),
           ),
@@ -3565,10 +4441,63 @@ class _ProfilePageState extends State<ProfilePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      appBar: AppBar(title: const Text('Profile')),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(210),
+        child: Stack(
+          children: [
+            const _HeroImg(pageIndex: 4, height: 210),
+            Positioned(
+              left: 24,
+              bottom: 22,
+              right: 24,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: _C.coral.withAlpha(38),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: _C.coral.withAlpha(90)),
+                    ),
+                    child: const Text('YOUR PROFILE',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: _C.coral,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.2)),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _userName.isNotEmpty ? 'Hey, $_userName' : 'Profile',
+                    style: const TextStyle(
+                      fontSize: 38,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                      height: 1.0,
+                      shadows: [
+                        Shadow(
+                            color: Colors.black54,
+                            blurRadius: 10,
+                            offset: Offset(0, 3))
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text('Track & manage your progress',
+                      style: TextStyle(
+                          fontSize: 13, color: _C.textSecondary)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
       body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: _C.accent))
+              child: CircularProgressIndicator(color: _C.coral))
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
               children: [
