@@ -5,6 +5,51 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz_data;
+
+// ── Notification helper ──────────────────────────────────────────────────────
+final FlutterLocalNotificationsPlugin _notificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+Future<void> initNotifications() async {
+  tz_data.initializeTimeZones();
+  const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const settings = InitializationSettings(android: android);
+  await _notificationsPlugin.initialize(settings);
+  await _notificationsPlugin
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
+      ?.requestNotificationsPermission();
+}
+
+Future<void> scheduleCardioReminder(String message, TimeOfDay time) async {
+  final now = DateTime.now();
+  var scheduled = DateTime(now.year, now.month, now.day + 1, time.hour, time.minute);
+  await _notificationsPlugin.zonedSchedule(
+    1,
+    'Cardio Tomorrow 🏃',
+    message,
+    tz.TZDateTime.from(scheduled, tz.local),
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'cardio_channel',
+        'Cardio Reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
+    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
+    matchDateTimeComponents: DateTimeComponents.time,
+  );
+}
+
+Future<void> cancelCardioReminder() async {
+  await _notificationsPlugin.cancel(1);
+}
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PALETTE
@@ -26,15 +71,17 @@ class _C {
   static const textSecondary = Color(0xFFB0B0CC);
   static const textMuted = Color(0xFF7070A0);
 
-  // Per-page accent palette [Workout, Plan, History, Analytics, Profile]
+  // Per-page accent palette [Workout, Plan, History, Analytics, Profile, Cardio]
   static const List<Color> pageAccents = [
     Color(0xFF7C4DFF), // Workout – deep violet
     Color(0xFF00BCD4), // Plan – ocean teal
     Color(0xFFFFAB00), // History – amber gold
     Color(0xFF00E676), // Analytics – emerald
     Color(0xFFFF5252), // Profile – coral red
+    Color(0xFFFF9800), // Cardio – orange
   ];
   static const List<String> pageImages = [
+    'assets/IM1.jpeg',
     'assets/IM1.jpeg',
     'assets/IM1.jpeg',
     'assets/IM1.jpeg',
@@ -63,11 +110,12 @@ class _PageBg extends StatelessWidget {
     Color(0x99FFAB00), // History  – amber
     Color(0x9900E676), // Analytics– emerald
     Color(0x99FF5252), // Profile  – coral
+    Color(0x99FF9800), // Cardio   – orange
   ];
 
   @override
   Widget build(BuildContext context) {
-    final idx = pageIndex.clamp(0, 4);
+    final idx = pageIndex.clamp(0, 5);
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -108,6 +156,7 @@ class _HeroImg extends StatelessWidget {
     Color(0x33FFAB00), // History – amber
     Color(0x3300E676), // Analytics– emerald
     Color(0x33FF5252), // Profile – coral
+    Color(0x33FF9800), // Cardio  – orange
   ];
   static const _alignments = [
     Alignment(0.0, -0.2),
@@ -115,11 +164,12 @@ class _HeroImg extends StatelessWidget {
     Alignment(-0.2, 0.3),
     Alignment(0.0, -0.4),
     Alignment(-0.3, 0.1),
+    Alignment(0.2, -0.1),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final idx = pageIndex.clamp(0, 4);
+    final idx = pageIndex.clamp(0, 5);
     return SizedBox(
       width: double.infinity,
       height: height,
@@ -570,6 +620,10 @@ class Exercise {
   final List<int> pairedSetRepsB;
   final List<double> pairedSetWeightsC;
   final List<int> pairedSetRepsC;
+  // Equipment type: 'barbell' | 'dumbbell'
+  final String equipmentType;
+  // Working set weight (for drop set — the starting weight before drops)
+  final double workingSetWeight;
 
   Exercise({
     required this.id,
@@ -588,23 +642,37 @@ class Exercise {
     this.pairedSetRepsB = const [],
     this.pairedSetWeightsC = const [],
     this.pairedSetRepsC = const [],
+    this.equipmentType = 'barbell',
+    this.workingSetWeight = 0.0,
   });
+
+  /// Effective weight for a single hand/side.
+  /// For dumbbell, the stored weight is per dumbbell, total = weight * 2.
+  double get effectiveTotalWeight {
+    final w = weight > 0 ? weight : 0.0;
+    return equipmentType == 'dumbbell' ? w * 2 : w.toDouble();
+  }
+
+  double _effectiveSetWeight(int i) {
+    final w = (i < setWeights.length && setWeights[i] > 0)
+        ? setWeights[i]
+        : (weight > 0 ? weight : 1.0);
+    return equipmentType == 'dumbbell' ? w * 2 : w.toDouble();
+  }
 
   /// Raw volume in the exercise's own stored unit (for display only).
   double get volume {
     if (setWeights.isNotEmpty || setReps.isNotEmpty) {
       double total = 0;
       for (int i = 0; i < sets; i++) {
-        final w = (i < setWeights.length && setWeights[i] > 0)
-            ? setWeights[i]
-            : (weight > 0 ? weight : 1);
+        final w = _effectiveSetWeight(i);
         final r =
             (i < setReps.length && setReps[i] > 0) ? setReps[i] : reps;
         total += w * r;
       }
       return total;
     }
-    return sets * reps * (weight > 0 ? weight : 1);
+    return sets * reps * (effectiveTotalWeight > 0 ? effectiveTotalWeight : 1);
   }
 
   /// Volume normalised to KG for cross-unit comparison and analytics.
@@ -621,9 +689,10 @@ class Exercise {
 
   double get avgWeight {
     if (setWeights.isNotEmpty && setWeights.any((w) => w > 0)) {
-      return setWeights.reduce((a, b) => a + b) / setWeights.length;
+      final eff = setWeights.map((w) => equipmentType == 'dumbbell' ? w * 2 : w);
+      return eff.reduce((a, b) => a + b) / setWeights.length;
     }
-    return weight;
+    return effectiveTotalWeight;
   }
 
   Map<String, dynamic> toJson() => {
@@ -643,6 +712,8 @@ class Exercise {
         'pairedSetRepsB': pairedSetRepsB,
         'pairedSetWeightsC': pairedSetWeightsC,
         'pairedSetRepsC': pairedSetRepsC,
+        'equipmentType': equipmentType,
+        'workingSetWeight': workingSetWeight,
       };
 
   factory Exercise.fromJson(Map<String, dynamic> json) => Exercise(
@@ -686,6 +757,8 @@ class Exercise {
                 ?.map((e) => (e as num).toInt())
                 .toList() ??
             [],
+        equipmentType: json['equipmentType'] as String? ?? 'barbell',
+        workingSetWeight: (json['workingSetWeight'] as num?)?.toDouble() ?? 0.0,
       );
 }
 
@@ -818,6 +891,37 @@ class _HomePageState extends State<HomePage> {
               child: _pages[_currentIndex],
             ),
           ),
+          // Global floating cardio button — always on top of all pages
+          Positioned(
+            right: 20,
+            bottom: 98,
+            child: GestureDetector(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CardioPage()),
+              ),
+              child: Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFFFF9800), Color(0xFFF57C00)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFFF9800).withAlpha(120),
+                      blurRadius: 18,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.directions_run_rounded, color: Colors.white, size: 26),
+              ),
+            ),
+          ),
         ],
       ),
       extendBody: true,
@@ -933,12 +1037,15 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   final _setsCtrl = TextEditingController();
   final _repsCtrl = TextEditingController();
   final _weightCtrl = TextEditingController();
+  final _workingSetWeightCtrl = TextEditingController(); // Drop set: working set weight
   List<TextEditingController> _setWeightCtrls = [];
   List<TextEditingController> _setRepsCtrls = [];
   bool _isSaving = false;
   String _selectedUnit = 'KG';
   String _setType = 'Normal';
+  String _equipmentType = 'barbell'; // 'barbell' | 'dumbbell'
   int? _selectedExIdx;
+  List<String> _savedExerciseNames = []; // for autocomplete
   // Paired exercise name controllers (Superset = B; Giant Set = B + C)
   final _pairedExCtrl1 = TextEditingController();
   final _pairedExCtrl2 = TextEditingController();
@@ -954,12 +1061,29 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   void initState() {
     super.initState();
     _loadUnit();
+    _loadSavedNames();
     _animCtrl = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 700));
     _fadeAnim =
         CurvedAnimation(parent: _animCtrl, curve: Curves.easeOutCubic);
     _animCtrl.forward();
     _setsCtrl.addListener(_onSetsChanged);
+  }
+
+  Future<void> _loadSavedNames() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('exercises') ?? '[]';
+    try {
+      final list = json.decode(raw) as List;
+      final names = list
+          .whereType<Map<String, dynamic>>()
+          .map((e) => e['name'] as String? ?? '')
+          .where((n) => n.isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort();
+      if (mounted) setState(() => _savedExerciseNames = names);
+    } catch (_) {}
   }
 
   void _onSetsChanged() {
@@ -1047,6 +1171,9 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
           _pairedExCtrl1.text.trim(),
         if (_setType == 'Giant Set') _pairedExCtrl2.text.trim(),
       ].where((s) => s.isNotEmpty).toList();
+      final workingSetWeight = _setType == 'Drop Set'
+          ? double.tryParse(_workingSetWeightCtrl.text.trim()) ?? 0.0
+          : 0.0;
       final ex = Exercise(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         name: name,
@@ -1064,6 +1191,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         pairedSetRepsB: pairedSetRepsB,
         pairedSetWeightsC: pairedSetWeightsC,
         pairedSetRepsC: pairedSetRepsC,
+        equipmentType: _equipmentType,
+        workingSetWeight: workingSetWeight,
       );
       list.insert(0, ex.toJson());
       await prefs.setString('exercises', json.encode(list));
@@ -1102,6 +1231,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       _setsCtrl.clear();
       _repsCtrl.clear();
       _weightCtrl.clear();
+      _workingSetWeightCtrl.clear();
       for (var c in _setWeightCtrls) c.clear();
       _updateSetWeightCtrls(0);
       _pairedExCtrl1.clear();
@@ -1113,7 +1243,9 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
       setState(() {
         _selectedExIdx = null;
         _setType = 'Normal';
+        _equipmentType = 'barbell';
       });
+      _loadSavedNames();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1157,6 +1289,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     _setsCtrl.dispose();
     _repsCtrl.dispose();
     _weightCtrl.dispose();
+    _workingSetWeightCtrl.dispose();
     _pairedExCtrl1.dispose();
     _pairedExCtrl2.dispose();
     for (var c in _setWeightCtrls) c.dispose();
@@ -1440,14 +1573,86 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                     ),
                     const SizedBox(height: 16),
 
-                    _glassField(
-                      controller: _exerciseNameCtrl,
-                      label: 'Exercise Name',
-                      icon: Icons.fitness_center_rounded,
-                      iconColor: _C.accent,
-                      capitalization: TextCapitalization.words,
-                      validator: (v) =>
-                          v?.trim().isEmpty ?? true ? 'Required' : null,
+                    // ── Equipment Type Toggle (Dumbbell / Barbell) ──
+                    _GlassCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.fitness_center_rounded, size: 18, color: _C.textSecondary),
+                              SizedBox(width: 10),
+                              Text('Equipment', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _C.textSecondary)),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)),
+                            child: Row(
+                              children: [
+                                _equipBtn('barbell', Icons.horizontal_rule_rounded, 'Barbell'),
+                                _equipBtn('dumbbell', Icons.sports_gymnastics_rounded, 'Dumbbell'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // ── Autocomplete Exercise Name ──
+                    Autocomplete<String>(
+                      initialValue: TextEditingValue(text: _exerciseNameCtrl.text),
+                      optionsBuilder: (textEditingValue) {
+                        if (textEditingValue.text.isEmpty) return const [];
+                        final q = textEditingValue.text.toLowerCase();
+                        return _savedExerciseNames.where((n) => n.toLowerCase().contains(q));
+                      },
+                      displayStringForOption: (s) => s,
+                      onSelected: (val) {
+                        _exerciseNameCtrl.text = val;
+                      },
+                      fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
+                        ctrl.addListener(() {
+                          _exerciseNameCtrl.text = ctrl.text;
+                        });
+                        return _glassField(
+                          controller: ctrl,
+                          focusNode: focusNode,
+                          label: 'Exercise Name',
+                          icon: Icons.fitness_center_rounded,
+                          iconColor: _C.accent,
+                          capitalization: TextCapitalization.words,
+                          validator: (v) => v?.trim().isEmpty ?? true ? 'Required' : null,
+                        );
+                      },
+                      optionsViewBuilder: (ctx, onSelected, options) {
+                        return Align(
+                          alignment: Alignment.topLeft,
+                          child: Material(
+                            color: Colors.transparent,
+                            child: Container(
+                              margin: const EdgeInsets.only(top: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xEE1A1C2E),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: _C.border),
+                              ),
+                              child: ListView(
+                                padding: EdgeInsets.zero,
+                                shrinkWrap: true,
+                                children: options.map((opt) => ListTile(
+                                  dense: true,
+                                  leading: const Icon(Icons.history_rounded, color: _C.accent, size: 16),
+                                  title: Text(opt, style: const TextStyle(color: _C.textPrimary, fontSize: 13)),
+                                  onTap: () => onSelected(opt),
+                                )).toList(),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -1627,11 +1832,45 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                               const SizedBox(width: 8),
                               const Expanded(
                                 child: Text(
-                                  'Drop Set — enter weights in decreasing order below. Reps can increase each drop.',
+                                  'Drop Set — enter starting weight, then each drop weight below.',
                                   style: TextStyle(
                                       fontSize: 11,
                                       color: _C.textSecondary),
                                 ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        // Working set weight
+                        _glassField(
+                          controller: _workingSetWeightCtrl,
+                          label: 'Working Set Weight (starting weight)',
+                          icon: Icons.monitor_weight_rounded,
+                          iconColor: _C.coral,
+                          inputType: const TextInputType.numberWithOptions(decimal: true),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return null;
+                            final n = double.tryParse(v);
+                            return n == null || n < 0 ? 'Invalid' : null;
+                          },
+                        ),
+                        const SizedBox(height: 8),
+                        // Drop count info
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: _C.coral.withAlpha(20),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _C.coral.withAlpha(60)),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.format_list_numbered_rounded, color: _C.coral, size: 16),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Total drops: ${_setWeightCtrls.length}',
+                                style: const TextStyle(color: _C.coral, fontWeight: FontWeight.w700, fontSize: 13),
                               ),
                             ],
                           ),
@@ -1932,6 +2171,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         _setsCtrl.clear();
                         _repsCtrl.clear();
                         _weightCtrl.clear();
+                        _workingSetWeightCtrl.clear();
                         for (var c in _setWeightCtrls) c.clear();
                         for (var c in _setRepsCtrls) c.clear();
                         _updateSetWeightCtrls(0);
@@ -1944,6 +2184,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                         setState(() {
                           _selectedExIdx = null;
                           _setType = 'Normal';
+                          _equipmentType = 'barbell';
                         });
                       },
                       child: const Text('Clear Form',
@@ -1981,6 +2222,46 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
             fontWeight: FontWeight.w700,
             color: active ? Colors.white : _C.textMuted,
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _equipBtn(String type, IconData icon, String label) {
+    final active = _equipmentType == type;
+    return GestureDetector(
+      onTap: () => setState(() => _equipmentType = type),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          gradient: active
+              ? LinearGradient(colors: [
+                  type == 'barbell' ? _C.amber : _C.green,
+                  type == 'barbell' ? const Color(0xFFFF8F00) : const Color(0xFF00C853),
+                ])
+              : null,
+          color: active ? null : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: active ? Colors.white : _C.textMuted),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: active ? Colors.white : _C.textMuted,
+              ),
+            ),
+            if (active && type == 'dumbbell') ...[
+              const SizedBox(width: 4),
+              const Text('×2', style: TextStyle(fontSize: 10, color: Colors.white70, fontWeight: FontWeight.w600)),
+            ],
+          ],
         ),
       ),
     );
@@ -2909,12 +3190,14 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
   }
 
   Future<void> _delete(String id) async {
+    // Immediately remove from local list for responsive UI
+    setState(() => _exercises.removeWhere((e) => e.id == id));
+    // Then persist to storage
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('exercises') ?? '[]';
     final list = (json.decode(raw) as List)
       ..removeWhere((e) => e is Map && e['id'] == id);
     await prefs.setString('exercises', json.encode(list));
-    _loadData();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -3314,6 +3597,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                           ),
                         ),
                         ...exs.map((e) => _ExHistoryCard(
+                              key: ValueKey(e.id),
                               exercise: e,
                               unit: _unit,
                               onTap: () => _edit(e),
@@ -3335,11 +3619,36 @@ class _ExHistoryCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   const _ExHistoryCard({
+    super.key,
     required this.exercise,
     required this.unit,
     required this.onTap,
     required this.onDelete,
   });
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xEE1A1C2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text('Delete?', style: TextStyle(color: _C.textPrimary)),
+        content: Text('Delete "${exercise.name}"?',
+            style: const TextStyle(color: _C.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: _C.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete', style: TextStyle(color: _C.coral)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) onDelete();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -3362,34 +3671,29 @@ class _ExHistoryCard extends StatelessWidget {
         ),
         child: const Icon(Icons.delete_rounded, color: Colors.white),
       ),
-      confirmDismiss: (_) async => await showDialog(
-            context: context,
-            builder: (_) => BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-              child: AlertDialog(
-                backgroundColor: const Color(0xEE1A1C2E),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24)),
-                title: const Text('Delete?',
-                    style: TextStyle(color: _C.textPrimary)),
-                content: Text('Delete "${exercise.name}"?',
-                    style: const TextStyle(color: _C.textSecondary)),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel',
-                        style: TextStyle(color: _C.textMuted)),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Delete',
-                        style: TextStyle(color: _C.coral)),
-                  ),
-                ],
+      confirmDismiss: (_) async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xEE1A1C2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: const Text('Delete?', style: TextStyle(color: _C.textPrimary)),
+            content: Text('Delete "${exercise.name}"?',
+                style: const TextStyle(color: _C.textSecondary)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel', style: TextStyle(color: _C.textMuted)),
               ),
-            ),
-          ) ??
-          false,
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Delete', style: TextStyle(color: _C.coral)),
+              ),
+            ],
+          ),
+        );
+        return confirmed == true;
+      },
       onDismissed: (_) => onDelete(),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
@@ -3516,6 +3820,18 @@ class _ExHistoryCard extends StatelessWidget {
                                     ],
                                   ),
                                 ),
+                              GestureDetector(
+                                onTap: () => _confirmDelete(context),
+                                child: Container(
+                                  padding: const EdgeInsets.all(5),
+                                  decoration: BoxDecoration(
+                                    color: _C.coral.withAlpha(25),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(Icons.delete_outline_rounded,
+                                      color: _C.coral, size: 16),
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 6),
@@ -4959,6 +5275,679 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CARDIO MODEL
+// ═══════════════════════════════════════════════════════════════════════════════
+
+class _CardioEntry {
+  final String id;
+  final String type; // e.g. Running, Cycling, Rowing…
+  final int durationMinutes;
+  final double distanceKm;
+  final int calories;
+  final DateTime date;
+  final String notes;
+
+  _CardioEntry({
+    required this.id,
+    required this.type,
+    required this.durationMinutes,
+    required this.distanceKm,
+    required this.calories,
+    required this.date,
+    this.notes = '',
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'durationMinutes': durationMinutes,
+        'distanceKm': distanceKm,
+        'calories': calories,
+        'date': date.toIso8601String(),
+        'notes': notes,
+      };
+
+  factory _CardioEntry.fromJson(Map<String, dynamic> j) => _CardioEntry(
+        id: j['id'] as String,
+        type: j['type'] as String? ?? 'Cardio',
+        durationMinutes: j['durationMinutes'] as int? ?? 0,
+        distanceKm: (j['distanceKm'] as num?)?.toDouble() ?? 0.0,
+        calories: j['calories'] as int? ?? 0,
+        date: DateTime.tryParse(j['date'] as String? ?? '') ?? DateTime.now(),
+        notes: j['notes'] as String? ?? '',
+      );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CARDIO PAGE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const List<String> kCardioTypes = [
+  'Running',
+  'Walking',
+  'Cycling',
+  'Rowing',
+  'Jump Rope',
+  'Swimming',
+  'Elliptical',
+  'HIIT',
+  'Other',
+];
+
+class CardioPage extends StatefulWidget {
+  const CardioPage({super.key});
+
+  @override
+  State<CardioPage> createState() => _CardioPageState();
+}
+
+class _CardioPageState extends State<CardioPage> {
+  static const _storageKey = 'cardio_entries_v1';
+  static const _reminderKey = 'cardio_reminder_enabled';
+  static const _reminderHourKey = 'cardio_reminder_hour';
+  static const _reminderMinKey = 'cardio_reminder_min';
+  static const _reminderMsgKey = 'cardio_reminder_msg';
+
+  List<_CardioEntry> _entries = [];
+  bool _isLoading = true;
+  bool _reminderEnabled = false;
+  TimeOfDay _reminderTime = const TimeOfDay(hour: 7, minute: 0);
+  String _reminderMsg = "Don't forget your cardio session today!";
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    _reminderEnabled = prefs.getBool(_reminderKey) ?? false;
+    _reminderTime = TimeOfDay(
+      hour: prefs.getInt(_reminderHourKey) ?? 7,
+      minute: prefs.getInt(_reminderMinKey) ?? 0,
+    );
+    _reminderMsg = prefs.getString(_reminderMsgKey) ??
+        "Don't forget your cardio session today!";
+    try {
+      final raw = prefs.getString(_storageKey) ?? '[]';
+      final list = (json.decode(raw) as List)
+          .whereType<Map<String, dynamic>>()
+          .map(_CardioEntry.fromJson)
+          .toList()
+        ..sort((a, b) => b.date.compareTo(a.date));
+      if (mounted) setState(() { _entries = list; _isLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _save() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _storageKey, json.encode(_entries.map((e) => e.toJson()).toList()));
+  }
+
+  Future<void> _saveReminderSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_reminderKey, _reminderEnabled);
+    await prefs.setInt(_reminderHourKey, _reminderTime.hour);
+    await prefs.setInt(_reminderMinKey, _reminderTime.minute);
+    await prefs.setString(_reminderMsgKey, _reminderMsg);
+    if (_reminderEnabled) {
+      await scheduleCardioReminder(_reminderMsg, _reminderTime);
+    } else {
+      await cancelCardioReminder();
+    }
+  }
+
+  Future<void> _showAddDialog() async {
+    String selectedType = kCardioTypes.first;
+    final durCtrl = TextEditingController();
+    final distCtrl = TextEditingController();
+    final calCtrl = TextEditingController();
+    final notesCtrl = TextEditingController();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setDs) => Dialog(
+          backgroundColor: const Color(0xEE1A1C2E),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          child: SizedBox(
+            width: 360,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Log Cardio',
+                      style: TextStyle(color: _C.textPrimary, fontWeight: FontWeight.w700, fontSize: 18)),
+                  const SizedBox(height: 16),
+                  const Text('Type', style: TextStyle(color: _C.textMuted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: kCardioTypes.map((t) {
+                      final sel = selectedType == t;
+                      return GestureDetector(
+                        onTap: () => setDs(() => selectedType = t),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          decoration: BoxDecoration(
+                            gradient: sel
+                                ? const LinearGradient(colors: [Color(0xFFFF9800), Color(0xFFF57C00)])
+                                : null,
+                            color: sel ? null : Colors.white10,
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Text(t,
+                              style: TextStyle(
+                                  color: sel ? Colors.white : _C.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: sel ? FontWeight.w700 : FontWeight.w500)),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(child: _dialogField(durCtrl, 'Duration (min)', type: TextInputType.number)),
+                      const SizedBox(width: 10),
+                      Expanded(child: _dialogField(distCtrl, 'Distance (km)', type: const TextInputType.numberWithOptions(decimal: true))),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  _dialogField(calCtrl, 'Calories burned (optional)', type: TextInputType.number),
+                  const SizedBox(height: 10),
+                  _dialogField(notesCtrl, 'Notes (optional)'),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel', style: TextStyle(color: _C.textMuted)),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(colors: [Color(0xFFFF9800), Color(0xFFF57C00)]),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: TextButton(
+                          onPressed: () {
+                            final dur = int.tryParse(durCtrl.text.trim()) ?? 0;
+                            if (dur <= 0) {
+                              Navigator.pop(ctx, false);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Please enter duration in minutes')));
+                              return;
+                            }
+                            Navigator.pop(ctx, true);
+                          },
+                          child: const Text('Save', style: TextStyle(color: Colors.white)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (ok != true) {
+      durCtrl.dispose(); distCtrl.dispose(); calCtrl.dispose(); notesCtrl.dispose();
+      return;
+    }
+    final entry = _CardioEntry(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      type: selectedType,
+      durationMinutes: int.tryParse(durCtrl.text.trim()) ?? 0,
+      distanceKm: double.tryParse(distCtrl.text.trim()) ?? 0.0,
+      calories: int.tryParse(calCtrl.text.trim()) ?? 0,
+      date: DateTime.now(),
+      notes: notesCtrl.text.trim(),
+    );
+    durCtrl.dispose(); distCtrl.dispose(); calCtrl.dispose(); notesCtrl.dispose();
+    setState(() => _entries.insert(0, entry));
+    await _save();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('Cardio logged!'),
+        backgroundColor: const Color(0xFFFF9800),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ));
+    }
+  }
+
+  Future<void> _deleteEntry(String id) async {
+    setState(() => _entries.removeWhere((e) => e.id == id));
+    await _save();
+  }
+
+  Future<void> _showReminderSheet() async {
+    final msgCtrl = TextEditingController(text: _reminderMsg);
+    bool enabled = _reminderEnabled;
+    TimeOfDay time = _reminderTime;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx2, setSheet) => BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(ctx2).viewInsets.bottom),
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Color(0xEE1A1C2E),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                border: Border(top: BorderSide(color: _C.border, width: 0.5)),
+              ),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 30),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: _C.textMuted, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text("Tomorrow's Cardio Reminder",
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18, color: _C.textPrimary)),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Enable reminder', style: TextStyle(color: _C.textSecondary)),
+                      Switch(
+                        value: enabled,
+                        activeColor: const Color(0xFFFF9800),
+                        onChanged: (v) => setSheet(() => enabled = v),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  GestureDetector(
+                    onTap: () async {
+                      final picked = await showTimePicker(context: ctx2, initialTime: time);
+                      if (picked != null) setSheet(() => time = picked);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: _C.border),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.access_time_rounded, color: Color(0xFFFF9800)),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Notification time: ${time.format(ctx2)}',
+                            style: const TextStyle(color: _C.textPrimary, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: msgCtrl,
+                    style: const TextStyle(color: _C.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Reminder message',
+                      hintText: 'e.g. 30 min run tomorrow!',
+                      hintStyle: const TextStyle(color: _C.textMuted),
+                      prefixIcon: const Icon(Icons.message_rounded, color: Color(0xFFFF9800)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFFFF9800), Color(0xFFF57C00)]),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: FilledButton(
+                        onPressed: () async {
+                          setState(() {
+                            _reminderEnabled = enabled;
+                            _reminderTime = time;
+                            _reminderMsg = msgCtrl.text.trim().isEmpty
+                                ? "Don't forget your cardio session today!"
+                                : msgCtrl.text.trim();
+                          });
+                          await _saveReminderSettings();
+                          if (ctx2.mounted) Navigator.pop(ctx2);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content: Text(enabled
+                                  ? 'Reminder set for ${time.format(context)} tomorrow!'
+                                  : 'Reminder cancelled'),
+                              backgroundColor: const Color(0xFFFF9800),
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              margin: const EdgeInsets.all(16),
+                            ));
+                          }
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                        child: const Text('Save Reminder', style: TextStyle(fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    msgCtrl.dispose();
+  }
+
+  TextField _dialogField(TextEditingController ctrl, String label, {TextInputType? type}) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: type,
+      style: const TextStyle(color: _C.textPrimary),
+      decoration: InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: _C.textMuted),
+        filled: true,
+        fillColor: Colors.white10,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: _C.border),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: _C.border),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: const BorderSide(color: Color(0xFFFF9800)),
+        ),
+      ),
+    );
+  }
+
+  String _dateLabel(DateTime d) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yest = today.subtract(const Duration(days: 1));
+    final day = DateTime(d.year, d.month, d.day);
+    if (day == today) return 'Today';
+    if (day == yest) return 'Yesterday';
+    return DateFormat('EEE, MMM d').format(d);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const orange = Color(0xFFFF9800);
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(210),
+        child: Stack(
+          children: [
+            const _HeroImg(pageIndex: 5, height: 210),
+            // Back button
+            Positioned(
+              top: 40,
+              left: 4,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+                tooltip: 'Back',
+              ),
+            ),
+            Positioned(
+              left: 24,
+              bottom: 22,
+              right: 60,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: orange.withAlpha(38),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: orange.withAlpha(90)),
+                    ),
+                    child: const Text('CARDIO LOG',
+                        style: TextStyle(fontSize: 11, color: orange, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text('Cardio',
+                      style: TextStyle(
+                        fontSize: 38, fontWeight: FontWeight.w900, color: Colors.white, height: 1.0,
+                        shadows: [Shadow(color: Colors.black54, blurRadius: 10, offset: Offset(0, 3))],
+                      )),
+                  const SizedBox(height: 4),
+                  Text('${_entries.length} session${_entries.length == 1 ? '' : 's'} logged',
+                      style: const TextStyle(fontSize: 13, color: _C.textSecondary)),
+                ],
+              ),
+            ),
+            Positioned(
+              right: 8,
+              bottom: 14,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      _reminderEnabled ? Icons.notifications_active_rounded : Icons.notifications_none_rounded,
+                      color: _reminderEnabled ? orange : _C.textSecondary,
+                    ),
+                    onPressed: _showReminderSheet,
+                    tooltip: 'Tomorrow\'s reminder',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, color: _C.textSecondary),
+                    onPressed: _load,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFFFF9800)))
+          : _entries.isEmpty
+              ? _buildEmptyState(Icons.directions_run_rounded, 'No Cardio Yet',
+                  'Tap + to log your first cardio session')
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
+                  itemCount: _entries.length,
+                  itemBuilder: (_, i) {
+                    final e = _entries[i];
+                    return _CardioCard(
+                      entry: e,
+                      dateLabel: _dateLabel(e.date),
+                      onDelete: () => _deleteEntry(e.id),
+                    );
+                  },
+                ),
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'cardio_fab',
+        onPressed: _showAddDialog,
+        backgroundColor: orange,
+        icon: const Icon(Icons.add_rounded, color: Colors.white),
+        label: const Text('Log Cardio',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+}
+
+class _CardioCard extends StatelessWidget {
+  final _CardioEntry entry;
+  final String dateLabel;
+  final VoidCallback onDelete;
+
+  const _CardioCard({
+    required this.entry,
+    required this.dateLabel,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const orange = Color(0xFFFF9800);
+    return Dismissible(
+      key: Key(entry.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 24),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [_C.coral.withAlpha(20), _C.coral.withAlpha(100)]),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Icon(Icons.delete_rounded, color: Colors.white),
+      ),
+      confirmDismiss: (_) async {
+        return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xEE1A1C2E),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            title: const Text('Delete?', style: TextStyle(color: _C.textPrimary)),
+            content: Text('Delete this ${entry.type} session?', style: const TextStyle(color: _C.textSecondary)),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: _C.textMuted))),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete', style: TextStyle(color: _C.coral))),
+            ],
+          ),
+        ) ?? false;
+      },
+      onDismissed: (_) => onDelete(),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: _C.card,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _C.border, width: 0.6),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  Container(
+                    width: 46, height: 46,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [orange.withAlpha(60), orange.withAlpha(20)],
+                        begin: Alignment.topLeft, end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(13),
+                    ),
+                    child: const Icon(Icons.directions_run_rounded, color: orange, size: 22),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(entry.type, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _C.textPrimary)),
+                            const Spacer(),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: orange.withAlpha(30), borderRadius: BorderRadius.circular(8)),
+                              child: Text(dateLabel, style: const TextStyle(fontSize: 10, color: orange, fontWeight: FontWeight.w600)),
+                            ),
+                            const SizedBox(width: 6),
+                            GestureDetector(
+                              onTap: onDelete,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(color: _C.coral.withAlpha(20), borderRadius: BorderRadius.circular(8)),
+                                child: const Icon(Icons.delete_outline_rounded, color: _C.coral, size: 16),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6, runSpacing: 4,
+                          children: [
+                            if (entry.durationMinutes > 0)
+                              _tag('${entry.durationMinutes} min', Icons.timer_rounded),
+                            if (entry.distanceKm > 0)
+                              _tag('${entry.distanceKm.toStringAsFixed(1)} km', Icons.route_rounded),
+                            if (entry.calories > 0)
+                              _tag('${entry.calories} kcal', Icons.local_fire_department_rounded),
+                          ],
+                        ),
+                        if (entry.notes.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          Text(entry.notes, style: const TextStyle(fontSize: 12, color: _C.textMuted, height: 1.4)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tag(String text, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.white.withAlpha(12),
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(color: Colors.white12, width: 0.5),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: _C.textMuted),
+          const SizedBox(width: 4),
+          Text(text, style: const TextStyle(fontSize: 11, color: _C.textSecondary, fontWeight: FontWeight.w500)),
+        ],
       ),
     );
   }
