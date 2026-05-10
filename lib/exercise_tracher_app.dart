@@ -624,6 +624,8 @@ class Exercise {
   final String equipmentType;
   // Working set weight (for drop set — the starting weight before drops)
   final double workingSetWeight;
+  // PR label: 'none' | 'weekly' | 'overall'
+  final String prType;
 
   Exercise({
     required this.id,
@@ -644,6 +646,7 @@ class Exercise {
     this.pairedSetRepsC = const [],
     this.equipmentType = 'barbell',
     this.workingSetWeight = 0.0,
+    this.prType = 'none',
   });
 
   /// Effective weight for a single hand/side.
@@ -714,6 +717,7 @@ class Exercise {
         'pairedSetRepsC': pairedSetRepsC,
         'equipmentType': equipmentType,
         'workingSetWeight': workingSetWeight,
+        'prType': prType,
       };
 
   factory Exercise.fromJson(Map<String, dynamic> json) => Exercise(
@@ -759,6 +763,7 @@ class Exercise {
             [],
         equipmentType: json['equipmentType'] as String? ?? 'barbell',
         workingSetWeight: (json['workingSetWeight'] as num?)?.toDouble() ?? 0.0,
+        prType: json['prType'] as String? ?? 'none',
       );
 }
 
@@ -1010,7 +1015,11 @@ class _HomePageState extends State<HomePage> {
                 fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
                 color: sel ? accent : _C.textMuted,
               ),
-              child: Text(label),
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
             ),
           ],
         ),
@@ -1054,6 +1063,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
   List<TextEditingController> _pairedRepsCtrlsB = [];
   List<TextEditingController> _pairedWeightCtrlsC = [];
   List<TextEditingController> _pairedRepsCtrlsC = [];
+  int _autocompleteResetKey = 0; // force Autocomplete rebuild on form clear
   late AnimationController _animCtrl;
   late Animation<double> _fadeAnim;
 
@@ -1110,6 +1120,42 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
     if (mounted) setState(() => _selectedUnit = u);
   }
 
+  /// Pre-fill per-set weights/reps from the last saved entry for [name].
+  /// Used when a known exercise is selected to give weight suggestions.
+  Future<void> _prefillFromSavedExercise(String name) async {
+    if (name.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('exercises') ?? '[]';
+      final list = json.decode(raw) as List;
+      final match = list
+          .whereType<Map<String, dynamic>>()
+          .map((e) => Exercise.fromJson(e))
+          .where((e) => e.name.toLowerCase() == name.toLowerCase())
+          .toList();
+      if (match.isEmpty || !mounted) return;
+      match.sort((a, b) => b.date.compareTo(a.date));
+      final last = match.first;
+      // Fill per-set weight controllers with last session weights
+      final n = _setWeightCtrls.length;
+      for (int i = 0; i < n; i++) {
+        if (_setWeightCtrls[i].text.isEmpty) {
+          final w = i < last.setWeights.length ? last.setWeights[i] : last.weight;
+          if (w > 0) _setWeightCtrls[i].text = w.toStringAsFixed(1);
+        }
+        if (_setRepsCtrls[i].text.isEmpty) {
+          final r = i < last.setReps.length ? last.setReps[i] : last.reps;
+          if (r > 0) _setRepsCtrls[i].text = r.toString();
+        }
+      }
+      // If no global reps filled yet, suggest from last session
+      if (_repsCtrl.text.isEmpty && last.reps > 0) {
+        _repsCtrl.text = last.reps.toString();
+      }
+      setState(() {});
+    } catch (_) {}
+  }
+
   Future<void> _saveUnit(String unit) async {
     await setWeightUnit(unit);
     setState(() => _selectedUnit = unit);
@@ -1154,6 +1200,75 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
           ? setWeights.reduce((a, b) => a + b) / setWeights.length
           : double.tryParse(_weightCtrl.text.trim()) ?? 0.0;
       final isOverload = _checkOverload(list, name, sets, reps, avgWeight);
+
+      // ── PR type dialog ──────────────────────────────────────────────────
+      String prType = 'none';
+      if (isOverload && mounted) {
+        final choice = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: AlertDialog(
+              backgroundColor: const Color(0xEE1A1C2E),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+              title: Row(
+                children: [
+                  Icon(Icons.emoji_events_rounded,
+                      color: _C.amber, size: 26),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('New PR — $name!',
+                        style: const TextStyle(
+                            color: _C.textPrimary, fontSize: 17)),
+                  ),
+                ],
+              ),
+              content: const Text(
+                'You hit a personal record!\nHow do you want to tag this PR?',
+                style: TextStyle(color: _C.textSecondary, height: 1.5),
+              ),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              actionsAlignment: MainAxisAlignment.end,
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, 'none'),
+                  child: const Text('Skip',
+                      style: TextStyle(color: _C.textMuted)),
+                ),
+                OutlinedButton.icon(
+                  onPressed: () => Navigator.pop(ctx, 'weekly'),
+                  icon: const Icon(Icons.date_range_rounded,
+                      size: 16, color: _C.cyan),
+                  label: const Text('Weekly PR',
+                      style: TextStyle(color: _C.cyan)),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: _C.cyan, width: 1),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(ctx, 'overall'),
+                  icon: const Icon(Icons.emoji_events_rounded,
+                      size: 16, color: Colors.white),
+                  label: const Text('Overall PR',
+                      style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _C.amber,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+        prType = choice ?? 'none';
+      }
+      if (!mounted) return;
+
       final pairedSetWeightsB = _pairedWeightCtrlsB
           .map((c) => double.tryParse(c.text.trim()) ?? 0.0)
           .toList();
@@ -1193,39 +1308,54 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         pairedSetRepsC: pairedSetRepsC,
         equipmentType: _equipmentType,
         workingSetWeight: workingSetWeight,
+        prType: prType,
       );
       list.insert(0, ex.toJson());
       await prefs.setString('exercises', json.encode(list));
       if (!mounted) return;
+
+      // ── success snack ────────────────────────────────────────────────────
+      String snackMsg;
+      Color snackBg;
+      IconData snackIcon;
+      if (prType == 'overall') {
+        snackMsg = 'Overall PR! 🏆 Progressive Overload!';
+        snackBg = _C.amber;
+        snackIcon = Icons.emoji_events_rounded;
+      } else if (prType == 'weekly') {
+        snackMsg = 'Weekly PR! 📅 Progressive Overload!';
+        snackBg = _C.cyan;
+        snackIcon = Icons.date_range_rounded;
+      } else if (isOverload) {
+        snackMsg = 'New PR! Progressive Overload!';
+        snackBg = _C.green;
+        snackIcon = Icons.emoji_events_rounded;
+      } else {
+        snackMsg = 'Workout saved successfully!';
+        snackBg = _C.accent;
+        snackIcon = Icons.check_circle_rounded;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
             children: [
-              Icon(
-                isOverload
-                    ? Icons.emoji_events_rounded
-                    : Icons.check_circle_rounded,
-                color: Colors.white,
-              ),
+              Icon(snackIcon, color: Colors.white),
               const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  isOverload
-                      ? 'New PR! Progressive Overload!'
-                      : 'Workout saved successfully!',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
+                child: Text(snackMsg,
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
               ),
             ],
           ),
-          backgroundColor:
-              isOverload ? _C.green.withAlpha(200) : _C.accent,
+          backgroundColor: snackBg.withAlpha(220),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14)),
           margin: const EdgeInsets.all(16),
         ),
       );
+
+      // ── reset entire form ────────────────────────────────────────────────
       _formKey.currentState!.reset();
       _exerciseNameCtrl.clear();
       _setsCtrl.clear();
@@ -1244,6 +1374,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
         _selectedExIdx = null;
         _setType = 'Normal';
         _equipmentType = 'barbell';
+        _autocompleteResetKey++; // forces Autocomplete widget rebuild → clears field
       });
       _loadSavedNames();
     } catch (e) {
@@ -1603,7 +1734,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
 
                     // ── Autocomplete Exercise Name ──
                     Autocomplete<String>(
-                      initialValue: TextEditingValue(text: _exerciseNameCtrl.text),
+                      key: ValueKey(_autocompleteResetKey),
+                      initialValue: const TextEditingValue(text: ''),
                       optionsBuilder: (textEditingValue) {
                         if (textEditingValue.text.isEmpty) return const [];
                         final q = textEditingValue.text.toLowerCase();
@@ -1612,6 +1744,8 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                       displayStringForOption: (s) => s,
                       onSelected: (val) {
                         _exerciseNameCtrl.text = val;
+                        // Pre-fill weights/reps from last saved session for this exercise
+                        _prefillFromSavedExercise(val);
                       },
                       fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
                         ctrl.addListener(() {
@@ -1795,19 +1929,17 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                                     letterSpacing: 0.5),
                               ),
                               const SizedBox(height: 8),
-                              _inlineField(
+                              _autocompletePairedField(
                                 controller: _pairedExCtrl1,
                                 hint: 'Exercise B (e.g. Cable Fly)',
-                                icon: Icons.fitness_center_rounded,
                                 iconColor: _C.cyan,
                               ),
                               if (_setType == 'Giant Set') ...
                                 [
                                   const SizedBox(height: 8),
-                                  _inlineField(
+                                  _autocompletePairedField(
                                     controller: _pairedExCtrl2,
                                     hint: 'Exercise C (e.g. Push Up)',
-                                    icon: Icons.fitness_center_rounded,
                                     iconColor: _C.accentLight,
                                   ),
                                 ],
@@ -2185,6 +2317,7 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
                           _selectedExIdx = null;
                           _setType = 'Normal';
                           _equipmentType = 'barbell';
+                          _autocompleteResetKey++; // rebuild Autocomplete → clears field
                         });
                       },
                       child: const Text('Clear Form',
@@ -2316,6 +2449,74 @@ class _WorkoutEntryPageState extends State<WorkoutEntryPage>
             const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         isDense: true,
       ),
+    );
+  }
+
+  /// Autocomplete field for paired exercise names (Superset / Giant Set).
+  Widget _autocompletePairedField({
+    required TextEditingController controller,
+    required String hint,
+    required Color iconColor,
+  }) {
+    return Autocomplete<String>(
+      optionsBuilder: (textEditingValue) {
+        if (textEditingValue.text.isEmpty) return const [];
+        final q = textEditingValue.text.toLowerCase();
+        return _savedExerciseNames.where((n) => n.toLowerCase().contains(q));
+      },
+      displayStringForOption: (s) => s,
+      onSelected: (val) => controller.text = val,
+      fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
+        // Sync the Autocomplete's internal ctrl → our external controller
+        ctrl.addListener(() => controller.text = ctrl.text);
+        return TextField(
+          controller: ctrl,
+          focusNode: focusNode,
+          textCapitalization: TextCapitalization.words,
+          style: const TextStyle(color: _C.textPrimary, fontSize: 13),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: _C.textMuted, fontSize: 12),
+            prefixIcon: Icon(Icons.fitness_center_rounded,
+                color: iconColor, size: 16),
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            isDense: true,
+          ),
+        );
+      },
+      optionsViewBuilder: (ctx, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              margin: const EdgeInsets.only(top: 4),
+              constraints: const BoxConstraints(maxHeight: 180),
+              decoration: BoxDecoration(
+                color: const Color(0xEE1A1C2E),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _C.border),
+              ),
+              child: ListView(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                children: options
+                    .map((opt) => ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.history_rounded,
+                              color: _C.accent, size: 15),
+                          title: Text(opt,
+                              style: const TextStyle(
+                                  color: _C.textPrimary, fontSize: 13)),
+                          onTap: () => onSelected(opt),
+                        ))
+                    .toList(),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2811,6 +3012,8 @@ class _PlanCardState extends State<_PlanCard> {
                       children: [
                         Text(
                           widget.plan.title,
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
                           style: const TextStyle(
                             color: _C.textPrimary,
                             fontSize: 16,
@@ -3160,11 +3363,22 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
   List<Exercise> _exercises = [];
   bool _isLoading = true;
   String _unit = 'KG';
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
+  List<Exercise> get _filteredExercises {
+    if (_searchQuery.isEmpty) return _exercises;
+    final q = _searchQuery.toLowerCase();
+    return _exercises.where((e) => e.name.toLowerCase().contains(q)).toList();
+  }
 
   @override
   void initState() {
     super.initState();
     _loadData();
+    _searchCtrl.addListener(() {
+      setState(() => _searchQuery = _searchCtrl.text.trim());
+    });
   }
 
   Future<void> _loadData() async {
@@ -3251,7 +3465,9 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
         setWeightCtrls.removeLast().dispose();
       }
       while (setWeightCtrls.length < newCount) {
-        setWeightCtrls.add(TextEditingController());
+        // Pre-fill new weight row with last set's weight (handy when adding sets)
+        final lastWt = setWeightCtrls.isNotEmpty ? setWeightCtrls.last.text : '';
+        setWeightCtrls.add(TextEditingController(text: lastWt));
       }
       while (setRepsCtrls.length > newCount) {
         setRepsCtrls.removeLast().dispose();
@@ -3450,7 +3666,7 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
 
   Map<String, List<Exercise>> _groupByDate() {
     final grouped = <String, List<Exercise>>{};
-    for (var e in _exercises) {
+    for (var e in _filteredExercises) {
       final k = DateFormat('yyyy-MM-dd').format(e.date);
       grouped.putIfAbsent(k, () => []).add(e);
     }
@@ -3469,8 +3685,15 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
   }
 
   @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final grouped = _groupByDate();
+    final filtered = _filteredExercises;
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(
@@ -3519,7 +3742,9 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                       )),
                   const SizedBox(height: 4),
                   Text(
-                    '${_exercises.length} session${_exercises.length == 1 ? '' : 's'} recorded',
+                    _searchQuery.isEmpty
+                        ? '${_exercises.length} session${_exercises.length == 1 ? '' : 's'} recorded'
+                        : '${filtered.length} result${filtered.length == 1 ? '' : 's'} for "$_searchQuery"',
                     style: const TextStyle(
                         fontSize: 13, color: _C.textSecondary),
                   ),
@@ -3542,13 +3767,67 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: _C.accent))
-          : _exercises.isEmpty
-              ? _buildEmptyState(Icons.history_rounded, 'No Workouts Yet',
-                  'Start logging to see history')
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
-                  itemCount: grouped.length,
-                  itemBuilder: (context, i) {
+          : Column(
+              children: [
+                // ── Search bar ──────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xAA1A1C2E),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                              color: _searchQuery.isNotEmpty
+                                  ? const Color(0xFFFFAB00).withAlpha(120)
+                                  : _C.border,
+                              width: 0.9),
+                        ),
+                        child: TextField(
+                          controller: _searchCtrl,
+                          style: const TextStyle(
+                              color: _C.textPrimary, fontSize: 14),
+                          textInputAction: TextInputAction.search,
+                          decoration: InputDecoration(
+                            hintText: 'Search exercise…',
+                            hintStyle: const TextStyle(
+                                color: _C.textMuted, fontSize: 14),
+                            prefixIcon: const Icon(Icons.search_rounded,
+                                color: _C.textMuted, size: 20),
+                            suffixIcon: _searchQuery.isNotEmpty
+                                ? GestureDetector(
+                                    onTap: () {
+                                      _searchCtrl.clear();
+                                      FocusScope.of(context).unfocus();
+                                    },
+                                    child: const Icon(Icons.close_rounded,
+                                        color: _C.textMuted, size: 18),
+                                  )
+                                : null,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 13),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // ── List ─────────────────────────────────────────────────
+                Expanded(
+                  child: _exercises.isEmpty
+                      ? _buildEmptyState(Icons.history_rounded,
+                          'No Workouts Yet', 'Start logging to see history')
+                      : filtered.isEmpty
+                          ? _buildEmptyState(Icons.search_off_rounded,
+                              'No Results', 'No exercise matches "$_searchQuery"')
+                          : ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 120),
+                              itemCount: grouped.length,
+                              itemBuilder: (context, i) {
                     final key = grouped.keys.elementAt(i);
                     final exs = grouped[key]!;
                     final date =
@@ -3578,6 +3857,8 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                                     ),
                                     child: Text(
                                       _dateLabel(date),
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 1,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w700,
                                         color: Color(0xFFFFAB00),
@@ -3608,6 +3889,9 @@ class _WorkoutHistoryPageState extends State<WorkoutHistoryPage> {
                     );
                   },
                 ),
+                ),
+              ],
+            ),
     );
   }
 }
@@ -3790,36 +4074,55 @@ class _ExHistoryCard extends StatelessWidget {
                                   ),
                                 ),
                               if (exercise.isProgressiveOverload)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    gradient: const LinearGradient(
-                                        colors: [
-                                          _C.green,
-                                          Color(0xFF00C853)
-                                        ]),
-                                    borderRadius:
-                                        BorderRadius.circular(8),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(Icons.trending_up_rounded,
-                                          size: 12,
-                                          color: Color(0xFF08090F)),
-                                      SizedBox(width: 3),
-                                      Text(
-                                        'PR',
-                                        style: TextStyle(
-                                          color: Color(0xFF08090F),
-                                          fontWeight: FontWeight.w900,
-                                          fontSize: 10,
+                                Builder(builder: (ctx) {
+                                  final isPrOverall = exercise.prType == 'overall';
+                                  final isPrWeekly = exercise.prType == 'weekly';
+                                  final badgeColors = isPrOverall
+                                      ? [_C.amber, const Color(0xFFFF8F00)]
+                                      : isPrWeekly
+                                          ? [_C.cyan, const Color(0xFF0097A7)]
+                                          : [_C.green, const Color(0xFF00C853)];
+                                  final badgeIcon = isPrOverall
+                                      ? Icons.emoji_events_rounded
+                                      : isPrWeekly
+                                          ? Icons.date_range_rounded
+                                          : Icons.trending_up_rounded;
+                                  final badgeLabel = isPrOverall
+                                      ? 'Overall PR'
+                                      : isPrWeekly
+                                          ? 'Weekly PR'
+                                          : 'PR';
+                                  return Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                          colors: badgeColors),
+                                      borderRadius:
+                                          BorderRadius.circular(8),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(badgeIcon,
+                                            size: 12,
+                                            color: const Color(0xFF08090F)),
+                                        const SizedBox(width: 3),
+                                        Flexible(
+                                          child: Text(
+                                            badgeLabel,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Color(0xFF08090F),
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 10,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                                      ],
+                                    ),
+                                  );
+                                }),
                               GestureDetector(
                                 onTap: () => _confirmDelete(context),
                                 child: Container(
@@ -4042,6 +4345,8 @@ class _ExHistoryCard extends StatelessWidget {
       ),
       child: Text(
         text,
+        overflow: TextOverflow.ellipsis,
+        maxLines: 1,
         style: const TextStyle(
           fontSize: 11,
           color: _C.textSecondary,
@@ -4296,6 +4601,8 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                 children: [
                   Text(
                     value,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                     style: const TextStyle(
                       fontSize: 26,
                       fontWeight: FontWeight.w900,
@@ -4498,9 +4805,13 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text(top[i].key,
-                        style: const TextStyle(
-                            fontSize: 13, color: _C.textSecondary)),
+                    child: Text(
+                      top[i].key,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: const TextStyle(
+                          fontSize: 13, color: _C.textSecondary),
+                    ),
                   ),
                   Text(
                     '${top[i].value}',
@@ -4788,6 +5099,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   const SizedBox(height: 10),
                   Text(
                     _userName.isNotEmpty ? 'Hey, $_userName' : 'Profile',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                     style: const TextStyle(
                       fontSize: 38,
                       fontWeight: FontWeight.w900,
@@ -5054,6 +5367,8 @@ class _ProfilePageState extends State<ProfilePage> {
                                             DateFormat(
                                                     'MMM d, yyyy Â· h:mm a')
                                                 .format(entry.date),
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
                                             style: const TextStyle(
                                                 fontSize: 12,
                                                 color: _C.textMuted),
